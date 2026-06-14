@@ -86,7 +86,7 @@ void exception_handler(struct exception_frame *frame) {
                 serial_printf("[pf] OOM at %x\n", cr2);
                 for (;;) __asm__("hlt");
             }
-            vmm_map(page, phys, PG_PRESENT | PG_WRITE | (pf_user ? PG_USER : 0));
+            vmm_map(page, phys, PG_PRESENT | PG_WRITE | PG_NX | (pf_user ? PG_USER : 0));
             return;
         }
 
