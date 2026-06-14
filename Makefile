@@ -3,7 +3,7 @@ CFLAGS := -ffreestanding -nostdlib -mno-red-zone -mno-mmx -mno-sse \
            -mcmodel=large -Wall -Wextra -O2 -fno-stack-protector \
            -fno-omit-frame-pointer -I src/kernel -I src/kernel/arch/x86_64 \
            -I src/kernel/hal -I src/kernel/mm -I src/kernel/sched \
-           -I src/kernel/user -I src/kernel/modules -I src/fs \
+            -I src/kernel/user -I src/kernel/modules -I src/kernel/fs \
            -D__is_kernel -DNO_RUST_MODULE
 
 ASM := gcc
@@ -41,7 +41,7 @@ OBJS := \
 	build/ahci.o \
 	build/module_loader.o \
 	build/string.o \
-	build/swiftfs.o
+	build/swiftfs2.o
 
 .PHONY: all iso run clean rust-module
 
@@ -83,7 +83,7 @@ build/%.o: src/kernel/arch/x86_64/%.c | build
 build/%.o: src/kernel/%.c | build
 	$(CC) $(CFLAGS) -c $< -o $@
 
-build/%.o: src/fs/%.c | build
+build/%.o: src/kernel/fs/%.c | build
 	$(CC) $(CFLAGS) -c $< -o $@
 
 USER_PROG_BIN := build/user_prog.bin
@@ -105,19 +105,17 @@ build/iso: build/kernel.elf boot/grub.cfg | build
 iso: build/iso
 	grub-mkrescue -o build/swiftbsd.iso build/iso
 
-build/fs.img: tools/mkswiftfs build/user_prog.bin
-	./tools/mkswiftfs user.bin=build/user_prog.bin > $@
+tools/mkfs.swiftfs2: tools/mkfs.swiftfs2.c
+	gcc -Wall -O2 -o $@ $<
 
-build/disk.img:
-	dd if=/dev/zero of=$@ bs=1M count=64
+build/disk.img: tools/mkfs.swiftfs2
+	./tools/mkfs.swiftfs2 $@ 128
 
-run: iso build/disk.img build/fs.img
+run: iso build/disk.img
 	$(QEMU) -machine q35 -cpu max -cdrom build/swiftbsd.iso \
 		-drive file=build/disk.img,format=raw,if=none,id=disk \
-		-drive file=build/fs.img,format=raw,if=none,id=fs \
 		-device ahci,id=ahci \
 		-device ide-hd,drive=disk,bus=ahci.0 \
-		-device ide-hd,drive=fs,bus=ahci.1 \
 		-nographic -m 256M
 
 clean:

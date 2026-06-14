@@ -4,7 +4,7 @@
 #include "vmm.h"
 #include "ahci.h"
 #include "string.h"
-#include "swiftfs.h"
+#include "swiftfs2.h"
 
 void idt_init(void);
 void pit_init(int hz);
@@ -16,11 +16,14 @@ void module_subsystem_init(void);
 void module_load_all(const struct kernel_api *api);
 void kheap_init(void);
 void user_proc_init(void);
+int  user_proc_load(const void *data, uint32_t size);
 int  ahci_init(void);
 int  pci_init(void);
 
 extern uint64_t page_pml4[];
 extern uint8_t _bss_end[];
+extern uint8_t _binary_build_user_prog_bin_start[];
+extern uint8_t _binary_build_user_prog_bin_end[];
 
 static void task_a(void) {
     for (;;) {
@@ -87,37 +90,76 @@ void kmain(uint32_t mboot_info) {
         }
     }
 
-    /* Write test: write/read-back sector 1 */
+    /* Write test: write/read-back high sector (avoid FS at block 0-2) */
     memset(buf, 0xAA, 512);
-    int wret = ahci_write(0, 1, buf, 1);
-    serial_printf("[ahci] write sector 1: %d bytes\n", wret);
+    int wret = ahci_write(0, 1024, buf, 1);
+    serial_printf("[ahci] write sector 1024: %d bytes\n", wret);
     memset(buf, 0, 512);
-    int rret = ahci_read(0, 1, buf, 1);
-    serial_printf("[ahci] read back sector 1: %d bytes (first=%x)\n", rret, buf[0]);
+    int rret = ahci_read(0, 1024, buf, 1);
+    serial_printf("[ahci] read back sector 1024: %d bytes (first=%x)\n", rret, buf[0]);
 
-    /* Mount SwiftFS from second disk and read a file */
-    int fs_port = -1;
-    for (int p = 0; p < ahci_port_count(); p++) {
-        if (p == 1) { fs_port = p; break; }
+    /* Mount SwiftFS v2 */
+    int user_loaded = 0;
+    if (swiftfs2_mount(0) == 0) {
+        int fd = swiftfs2_open("/user.bin", O_RDONLY);
+        if (fd >= 0) {
+            /* Read file completely */
+            uint8_t *user_code = 0;
+            uint32_t sz = 0, cap = 4096;
+            user_code = kmalloc(cap);
+            int n;
+            while ((n = swiftfs2_read(fd, user_code + sz, cap - sz)) > 0) {
+                sz += n;
+                if (cap - sz < 256) {
+                    cap *= 2;
+                    uint8_t *newp = kmalloc(cap);
+                    memcpy(newp, user_code, sz);
+                    kfree(user_code);
+                    user_code = newp;
+                }
+            }
+            swiftfs2_close(fd);
+            if (sz > 0) {
+                serial_printf("[swiftfs2] loaded /user.bin (%d bytes)\n", sz);
+                user_proc_load(user_code, sz);
+                kfree(user_code);
+                user_loaded = 1;
+            }
+        } else {
+            uint64_t code_size = (uint64_t)_binary_build_user_prog_bin_end
+                               - (uint64_t)_binary_build_user_prog_bin_start;
+            serial_printf("[swiftfs2] creating /user.bin (%u bytes)\n", (unsigned)code_size);
+            int wfd = swiftfs2_open("/user.bin", O_WRONLY | O_CREAT | O_TRUNC);
+            if (wfd >= 0) {
+                int wr = swiftfs2_write(wfd, _binary_build_user_prog_bin_start, code_size);
+                swiftfs2_close(wfd);
+                serial_printf("[swiftfs2] wrote %d bytes\n", wr);
+                swiftfs2_sync();
+
+                fd = swiftfs2_open("/user.bin", O_RDONLY);
+                if (fd >= 0) {
+                    uint8_t *uc = kmalloc(code_size);
+                    int n = swiftfs2_read(fd, uc, code_size);
+                    if (n == (int)code_size) {
+                        serial_printf("[swiftfs2] loaded /user.bin (%d bytes)\n", n);
+                        user_proc_load(uc, code_size);
+                        user_loaded = 1;
+                    }
+                    kfree(uc);
+                    swiftfs2_close(fd);
+                }
+            }
+        }
     }
-    if (fs_port >= 0 && swiftfs_mount(fs_port) == 0) {
-        uint8_t *fbuf = kmalloc(512);
-        int sz = swiftfs_read("user.bin", fbuf, 512);
-        if (sz > 0)
-            serial_printf("[swiftfs] read user.bin: %d bytes\n", sz);
-        else
-            serial_puts("[swiftfs] read user.bin failed\n");
-        kfree(fbuf);
-    } else {
-        serial_puts("[swiftfs] mount failed (no FS disk)\n");
+
+    if (!user_loaded) {
+        serial_puts("[user] FS load failed, using embedded binary\n");
+        user_proc_init();
     }
 
     serial_puts("[sched] creating tasks...\n");
     task_create(task_a);
     task_create(task_b);
-
-    serial_puts("[user] launching user process\n");
-    user_proc_init();
 
     serial_puts("[kmain] entering idle loop\n");
 
