@@ -4,6 +4,7 @@
 #include "vmm.h"
 #include "ahci.h"
 #include "string.h"
+#include "swiftfs.h"
 
 void idt_init(void);
 void pit_init(int hz);
@@ -93,6 +94,23 @@ void kmain(uint32_t mboot_info) {
     memset(buf, 0, 512);
     int rret = ahci_read(0, 1, buf, 1);
     serial_printf("[ahci] read back sector 1: %d bytes (first=%x)\n", rret, buf[0]);
+
+    /* Mount SwiftFS from second disk and read a file */
+    int fs_port = -1;
+    for (int p = 0; p < ahci_port_count(); p++) {
+        if (p == 1) { fs_port = p; break; }
+    }
+    if (fs_port >= 0 && swiftfs_mount(fs_port) == 0) {
+        uint8_t *fbuf = kmalloc(512);
+        int sz = swiftfs_read("user.bin", fbuf, 512);
+        if (sz > 0)
+            serial_printf("[swiftfs] read user.bin: %d bytes\n", sz);
+        else
+            serial_puts("[swiftfs] read user.bin failed\n");
+        kfree(fbuf);
+    } else {
+        serial_puts("[swiftfs] mount failed (no FS disk)\n");
+    }
 
     serial_puts("[sched] creating tasks...\n");
     task_create(task_a);

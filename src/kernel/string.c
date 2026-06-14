@@ -14,3 +14,8 @@ void *memset(void *s, int c, size_t n) {
         p[i] = (unsigned char)c;
     return s;
 }
+
+int strcmp(const char *a, const char *b) {
+    while (*a && *a == *b) { a++; b++; }
+    return *(unsigned char *)a - *(unsigned char *)b;
+}
