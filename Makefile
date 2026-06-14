@@ -106,10 +106,10 @@ build/disk.img:
 
 run: iso build/disk.img
 	$(QEMU) -machine q35 -cpu max -cdrom build/swiftbsd.iso \
-		-device ahci,id=ahci \
 		-drive file=build/disk.img,format=raw,if=none,id=disk \
+		-device ahci,id=ahci \
 		-device ide-hd,drive=disk,bus=ahci.0 \
-		-serial stdio -m 256M
+		-nographic -m 256M
 
 clean:
 	rm -rf build

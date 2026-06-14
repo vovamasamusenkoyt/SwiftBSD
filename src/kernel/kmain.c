@@ -3,6 +3,7 @@
 #include "pmm.h"
 #include "vmm.h"
 #include "ahci.h"
+#include "string.h"
 
 void idt_init(void);
 void pit_init(int hz);
@@ -72,22 +73,26 @@ void kmain(uint32_t mboot_info) {
     pci_init();
     ahci_init();
 
-    uint8_t mbr[512];
+    uint8_t buf[512];
     for (int p = 0; p < ahci_port_count(); p++) {
-        int ret = ahci_read(p, 0, mbr, 1);
+        int ret = ahci_read(p, 0, buf, 1);
         if (ret > 0) {
             serial_printf("[ahci] port %d: sector 0 read OK (%d bytes)\n", p, ret);
-            serial_puts("[ahci] first 64 bytes:");
-            for (int i = 0; i < 64; i++) {
-                if ((i % 16) == 0) serial_putc('\n');
-                serial_printf(" %x", (unsigned)mbr[i]);
-            }
-            serial_putc('\n');
+            serial_printf("[ahci] sector 0 signature=%x %x\n",
+                buf[0x1FE], buf[0x1FF]);
             break;
         } else {
             serial_printf("[ahci] port %d: read failed\n", p);
         }
     }
+
+    /* Write test: write/read-back sector 1 */
+    memset(buf, 0xAA, 512);
+    int wret = ahci_write(0, 1, buf, 1);
+    serial_printf("[ahci] write sector 1: %d bytes\n", wret);
+    memset(buf, 0, 512);
+    int rret = ahci_read(0, 1, buf, 1);
+    serial_printf("[ahci] read back sector 1: %d bytes (first=%x)\n", rret, buf[0]);
 
     serial_puts("[sched] creating tasks...\n");
     task_create(task_a);
