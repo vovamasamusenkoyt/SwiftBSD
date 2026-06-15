@@ -98,9 +98,14 @@ int proc_create(uint64_t entry, uint64_t rsp, uint64_t cr3, uint64_t kstack) {
     procs[idx].state     = PROC_READY;
     procs[idx].exit_code = 0;
     procs[idx].parent    = 1;
-    procs[idx].cr3       = cr3;
-    procs[idx].kstack    = kstack;
-    procs[idx].frame     = frame;
+    procs[idx].cr3        = cr3;
+    procs[idx].kstack     = kstack;
+    procs[idx].frame      = frame;
+    procs[idx].heap_start = 0x10000000;
+    procs[idx].heap_break = 0x10000000;
+    for (int i = 0; i < VMA_MAX; i++)
+        procs[idx].vmas[i].used = 0;
+    procs[idx].vma_count  = 0;
 
     nr_procs++;
     return pid;
@@ -214,9 +219,14 @@ int proc_fork(void) {
     procs[idx].state     = PROC_READY;
     procs[idx].exit_code = 0;
     procs[idx].parent    = procs[parent_idx].pid;
-    procs[idx].cr3       = child_cr3;
-    procs[idx].kstack    = kstack;
-    procs[idx].frame     = (uint64_t *)child_frame;
+    procs[idx].cr3        = child_cr3;
+    procs[idx].kstack     = kstack;
+    procs[idx].frame      = (uint64_t *)child_frame;
+    procs[idx].heap_start = procs[parent_idx].heap_start;
+    procs[idx].heap_break = procs[parent_idx].heap_break;
+    for (int i = 0; i < VMA_MAX; i++)
+        procs[idx].vmas[i] = procs[parent_idx].vmas[i];
+    procs[idx].vma_count  = procs[parent_idx].vma_count;
 
     nr_procs++;
     return pid;

@@ -257,3 +257,22 @@ void vmm_unmap_user(void) {
 void vmm_set_cr3(uint64_t cr3) {
     __asm__ volatile("mov %0, %%cr3" : : "r"(cr3) : "memory");
 }
+
+uint64_t *vmm_pt_lookup(uint64_t virt) {
+    int pml4_idx = pml4_lookup(virt);
+    int pdpt_idx = pdpt_lookup(virt);
+    int pd_idx   = pd_lookup(virt);
+    int pt_idx   = pt_lookup(virt);
+
+    if (!(page_pml4[pml4_idx] & PG_PRESENT)) return 0;
+    uint64_t *pdpt = phys_to_virt(page_pml4[pml4_idx] & ~0xFFF);
+
+    if (!(pdpt[pdpt_idx] & PG_PRESENT)) return 0;
+    uint64_t *pd = phys_to_virt(pdpt[pdpt_idx] & ~0xFFF);
+
+    if (!(pd[pd_idx] & PG_PRESENT)) return 0;
+    uint64_t *pt = phys_to_virt(pd[pd_idx] & ~0xFFF);
+
+    if (!(pt[pt_idx] & PG_PRESENT)) return 0;
+    return &pt[pt_idx];
+}

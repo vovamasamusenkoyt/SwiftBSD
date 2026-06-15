@@ -2,6 +2,7 @@
 #include "kernel.h"
 #include "string.h"
 #include "ahci.h"
+#include "vfs.h"
 
 /* ========== Static state ========== */
 
@@ -881,4 +882,58 @@ int swiftfs2_umount(void) {
     memset(g_cache, 0, sizeof(g_cache));
     g_mounted = 0;
     return 0;
+}
+
+/* ========== VFS ops wrappers ========== */
+
+static int sw_open(const char *path, int flags, void **priv) {
+    int fd = swiftfs2_open(path, flags);
+    if (fd < 0) return -1;
+    *priv = (void *)(uintptr_t)fd;
+    return 0;
+}
+
+static int sw_read(void *priv, void *buf, uint32_t sz, uint64_t *pos) {
+    int fd = (int)(uintptr_t)priv;
+    g_fds[fd].pos = (uint32_t)*pos;
+    int ret = swiftfs2_read(fd, buf, sz);
+    if (ret > 0) *pos = g_fds[fd].pos;
+    return ret;
+}
+
+static int sw_write(void *priv, const void *buf, uint32_t sz, uint64_t *pos) {
+    int fd = (int)(uintptr_t)priv;
+    g_fds[fd].pos = (uint32_t)*pos;
+    int ret = swiftfs2_write(fd, buf, sz);
+    if (ret > 0) *pos = g_fds[fd].pos;
+    return ret;
+}
+
+static int sw_close(void *priv) {
+    int fd = (int)(uintptr_t)priv;
+    return swiftfs2_close(fd);
+}
+
+static int sw_fstat(void *priv, struct stat *st) {
+    int fd = (int)(uintptr_t)priv;
+    swiftfs2_stat_t sst;
+    int ret = swiftfs2_fstat(fd, &sst);
+    if (ret == 0) {
+        st->mode = sst.mode;
+        st->size = sst.size;
+    }
+    return ret;
+}
+
+static struct vfs_ops swiftfs_vfs_ops = {
+    .name  = "swiftfs",
+    .open  = sw_open,
+    .read  = sw_read,
+    .write = sw_write,
+    .close = sw_close,
+    .fstat = sw_fstat,
+};
+
+void swiftfs2_vfs_init(void) {
+    vfs_register(&swiftfs_vfs_ops);
 }

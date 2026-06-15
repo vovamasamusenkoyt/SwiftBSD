@@ -41,15 +41,18 @@ DEFINE_EMBEDDED(echo)
 /* Write embedded ELF to FS if not present */
 static void write_if_missing(const char *path,
                              uint8_t *start, uint8_t *end) {
-    int fd = swiftfs2_open(path, O_RDONLY);
-    if (fd >= 0) { swiftfs2_close(fd); return; }
+    int fd = vfs_open(path, O_RDONLY);
+    if (fd >= 0) { vfs_close(fd); return; }
 
     uint64_t sz = (uint64_t)end - (uint64_t)start;
-    fd = swiftfs2_open(path, O_WRONLY | O_CREAT | O_TRUNC);
+    fd = vfs_open(path, O_WRONLY | O_CREAT | O_TRUNC);
     if (fd < 0) return;
-    swiftfs2_write(fd, start, sz);
-    swiftfs2_close(fd);
+    vfs_write(fd, start, (uint32_t)sz);
+    vfs_close(fd);
 }
+
+void vfs_init(void);
+void swiftfs2_vfs_init(void);
 
 void kmain(uint32_t mboot_info) {
     serial_init();
@@ -101,9 +104,12 @@ void kmain(uint32_t mboot_info) {
     memset(buf, 0xAA, 512);
     ahci_write(0, 1024, buf, 1);
 
+    vfs_init();
+
     log_raw("\n");
     /* Mount SwiftFS v2 and prepare userland */
     if (swiftfs2_mount(0) == 0) {
+        swiftfs2_vfs_init();
         /* Create /bin/ directory */
         swiftfs2_mkdir("/bin", 0755);
 
@@ -118,13 +124,13 @@ void kmain(uint32_t mboot_info) {
         swiftfs2_sync();
 
         /* Read shell and create init process (PID 1) */
-        int fd = swiftfs2_open("/bin/shell", O_RDONLY);
+        int fd = vfs_open("/bin/shell", O_RDONLY);
         if (fd >= 0) {
             uint32_t cap = 65536, size = 0;
             uint8_t *data = kmalloc(cap);
             uint8_t tmp[512];
             int n;
-            while ((n = swiftfs2_read(fd, tmp, sizeof(tmp))) > 0) {
+            while ((n = vfs_read(fd, tmp, sizeof(tmp))) > 0) {
                 if (size + n > cap) {
                     cap *= 2;
                     uint8_t *np = kmalloc(cap);
@@ -135,7 +141,7 @@ void kmain(uint32_t mboot_info) {
                 memcpy(data + size, tmp, n);
                 size += n;
             }
-            swiftfs2_close(fd);
+            vfs_close(fd);
 
             if (size > 0) {
                 uint64_t entry;

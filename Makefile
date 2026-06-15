@@ -5,14 +5,20 @@ RUSTFLAGS := -C panic=abort -C opt-level=s -C link-args=-nostartfiles
 QEMU := qemu-system-x86_64
 
 # Rust module, built unconditionally (rustc works outside sandbox)
-RUST_MODULE := build-rust/test_module.a
+ifneq ($(RUST_MODULE),1)
+  RUST_OBJ :=
+  RUST_DEF :=
+else
+  RUST_OBJ := build-rust/test_module.a
+  RUST_DEF := -DUSE_RUST_MODULE=1
+endif
 
 CFLAGS := -ffreestanding -nostdlib -mno-red-zone -mno-mmx -mno-sse \
            -mcmodel=large -Wall -Wextra -O2 -fno-stack-protector \
            -fno-omit-frame-pointer -I src/kernel -I src/kernel/arch/x86_64 \
            -I src/kernel/hal -I src/kernel/mm -I src/kernel/sched \
-            -I src/kernel/user -I src/kernel/modules -I src/kernel/fs \
-           -D__is_kernel
+           -I src/kernel/user -I src/kernel/modules -I src/kernel/fs \
+           -D__is_kernel $(RUST_DEF)
 
 ASM := gcc
 ASMFLAGS := -ffreestanding -nostdlib -I src/kernel \
@@ -59,7 +65,8 @@ OBJS := \
 	build/string.o \
 	build/swiftfs2.o \
 	build/elf.o \
-	$(RUST_MODULE) \
+	build/vfs.o \
+	$(RUST_OBJ) \
 	$(USERLAND_OBJS)
 
 .PHONY: all iso run clean rust-module
@@ -72,6 +79,7 @@ build-rust/test_module.a: src/modules/test_module/lib.rs
 		-o $@ $<
 
 rust-module: build-rust/test_module.a
+	$(MAKE) RUST_MODULE=1
 
 build/kernel.elf: $(OBJS) linker.ld | build
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)

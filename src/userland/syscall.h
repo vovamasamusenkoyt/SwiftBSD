@@ -16,12 +16,23 @@
 #define SC_FORK   12
 #define SC_WAIT   13
 #define SC_GETPID 14
+#define SC_BRK    15
+#define SC_MMAP   16
+#define SC_MUNMAP 17
+#define SC_MSYNC  18
 
 #define O_RDONLY    0
 #define O_WRONLY    1
 #define O_RDWR      2
 #define O_CREAT     0x100
 #define O_TRUNC     0x200
+
+#define MAP_SHARED  1
+#define MAP_PRIVATE 2
+#define MAP_ANONYMOUS 4
+#define PROT_READ   1
+#define PROT_WRITE  2
+#define PROT_EXEC   4
 
 #define ARGS_PAGE ((char *)0x7F004000)
 
@@ -53,6 +64,32 @@ static void halt(void) { syscall(SC_HALT, 0, 0, 0); }
 static int fork(void) { return syscall(SC_FORK, 0, 0, 0); }
 static int wait(int *status) { return syscall(SC_WAIT, (long)status, 0, 0); }
 static int getpid(void) { return syscall(SC_GETPID, 0, 0, 0); }
+
+/* Packed mmap args - flags|fd|offset in arg3 */
+struct mmap_args { int flags; int fd; int pad; long long offset; };
+static void *mmap(void *addr, unsigned long length, int prot, int flags, int fd, long long offset) {
+    struct mmap_args a;
+    a.flags  = flags;
+    a.fd     = fd;
+    a.pad    = 0;
+    a.offset = offset;
+    return (void *)syscall(SC_MMAP, (long)addr, length, *(long *)&a);
+}
+static int munmap(void *addr, unsigned long length) {
+    return (int)syscall(SC_MUNMAP, (long)addr, length, 0);
+}
+static int msync(void *addr, unsigned long length) {
+    return (int)syscall(SC_MSYNC, (long)addr, length, 0);
+}
+static void *sbrk(long increment) {
+    long cur = syscall(SC_BRK, 0, 0, 0);
+    if (increment == 0) return (void *)cur;
+    long new = syscall(SC_BRK, cur + increment, 0, 0);
+    return (new == -1) ? (void *)-1 : (void *)cur;
+}
+static long brk(void *addr) {
+    return syscall(SC_BRK, (long)addr, 0, 0);
+}
 
 static int strcmp(const char *a, const char *b) {
     while (*a && *a == *b) { a++; b++; }

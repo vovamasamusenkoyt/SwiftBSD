@@ -1,14 +1,17 @@
 #pragma once
 #include <stdint.h>
 
-#define PG_PRESENT  1
-#define PG_WRITE    2
-#define PG_USER     4
-#define PG_HUGE     (1ULL << 7)
-#define PG_NX       (1ULL << 63)
+#define PG_PRESENT   1
+#define PG_WRITE     2
+#define PG_USER      4
+#define PG_ACCESSED  (1ULL << 5)
+#define PG_DIRTY     (1ULL << 6)
+#define PG_HUGE      (1ULL << 7)
+#define PG_NX        (1ULL << 63)
 
 void vmm_init(void);
 void vmm_map(uint64_t virt, uint64_t phys, uint64_t flags);
+uint64_t *vmm_pt_lookup(uint64_t virt);
 void vmm_map_in_cr3(uint64_t cr3, uint64_t virt, uint64_t phys, uint64_t flags);
 void vmm_unmap(uint64_t virt);
 uint64_t vmm_alloc_page(void);
