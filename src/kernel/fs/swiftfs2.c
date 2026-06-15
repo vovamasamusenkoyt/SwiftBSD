@@ -393,7 +393,7 @@ static int dir_add_entry(uint32_t dir_ino, const char *name,
 /* ========== File operations ========== */
 
 static int fd_alloc(void) {
-    for (int i = 0; i < SWIFTFS2_MAX_FD; i++) {
+    for (int i = 2; i < SWIFTFS2_MAX_FD; i++) {
         if (g_fds[i].inode == 0) return i;
     }
     return -1;
