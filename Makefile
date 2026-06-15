@@ -43,6 +43,7 @@ OBJS := \
 	build/timer.o \
 	build/sched.o \
 	build/serial.o \
+	build/log.o \
 	build/pmm.o \
 	build/pmem.o \
 	build/kheap.o \

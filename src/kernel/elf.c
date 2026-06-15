@@ -15,18 +15,17 @@ static uint64_t page_alloc_zero(void) {
 int elf64_load(const void *data, uint64_t *entry_out) {
     const elf64_hdr_t *hdr = (const elf64_hdr_t *)data;
 
-    serial_printf("[elf64] ENTER data=%x magic=%x type=%d mach=%d phnum=%d\n",
-                  (unsigned)(uintptr_t)data,
-                  *(const uint32_t *)hdr->e_ident,
-                  hdr->e_type, hdr->e_machine, hdr->e_phnum);
+    log_info("elf64: loading ELF image, magic=0x%x type=%d machine=%d phnum=%d",
+             *(const uint32_t *)hdr->e_ident,
+             hdr->e_type, hdr->e_machine, hdr->e_phnum);
 
     if (*(const uint32_t *)hdr->e_ident != ELF_MAGIC) return -1;
     if (hdr->e_ident[ELF64_EI_CLASS] != ELFCLASS64) return -1;
     if (hdr->e_type != ET_EXEC) return -1;
     if (hdr->e_machine != EM_X86_64) return -1;
 
-    serial_printf("[elf64] checks passed, e_phoff=%x e_entry=%x\n",
-                  (unsigned)hdr->e_phoff, (unsigned)hdr->e_entry);
+    log_info("elf64: entry=0x%x phnum=%d",
+             (unsigned)hdr->e_entry, hdr->e_phnum);
     const elf64_phdr_t *phdr = (const elf64_phdr_t *)((uint8_t *)data + hdr->e_phoff);
 
     for (int i = 0; i < hdr->e_phnum; i++) {
@@ -77,14 +76,10 @@ int elf64_load(const void *data, uint64_t *entry_out) {
 
     uint64_t raw_ee = *(uint64_t *)((uint8_t *)data + 0x18);
     uint64_t struct_ee = hdr->e_entry;
-    serial_printf("[elf64] data=%x raw_ee=%x struct_ee=%x phnum=%d\n",
-                  (unsigned)(uintptr_t)data,
-                  (unsigned)raw_ee, (unsigned)struct_ee,
-                  hdr->e_phnum);
     /* Check if corruption happened during mapping */
     uint64_t check = *(uint64_t *)((uint8_t *)data + 0x18);
     if (check != raw_ee)
-        serial_puts("[elf64] CORRUPTION after phdr loop!\n");
+        log_warn("elf64: data corruption detected after mapping");
     *entry_out = struct_ee;
     return 0;
 }

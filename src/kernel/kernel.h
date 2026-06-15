@@ -11,8 +11,11 @@ void serial_init(void);
 void serial_putc(char c);
 void serial_puts(const char *s);
 void serial_printf(const char *fmt, ...);
+void serial_vprintf(const char *fmt, __builtin_va_list args);
 int  serial_haschar(void);
 char serial_getc(void);
+
+#include "log.h"
 
 struct kernel_api {
     void *(*kmalloc)(size_t size);

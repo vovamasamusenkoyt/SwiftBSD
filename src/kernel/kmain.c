@@ -26,7 +26,9 @@ extern uint64_t syscall_kernel_rsp;
 extern uint64_t stack_top[];
 extern void user_entry(uint64_t entry, uint64_t rsp);
 
-/* Userland ELF binaries embedded from build/*.elf */
+extern uint64_t timer_get_ticks(void);
+
+/* Userland ELF binaries embedded from build (binary glob) */
 #define DEFINE_EMBEDDED(name) \
     extern uint8_t _binary_build_##name##_elf_start[]; \
     extern uint8_t _binary_build_##name##_elf_end[];
@@ -53,23 +55,26 @@ void kmain(uint32_t mboot_info) {
     serial_init();
     idt_init();
 
-    serial_puts("\n=== SwiftBSD v0.3 ===\n");
+    log_raw("SwiftBSD version 0.3\n");
+    log_raw("Booting SwiftBSD kernel\n\n");
 
     pmm_init(mboot_info);
     uint64_t mem = pmm_total_mem();
-    serial_printf("[mem] %d MB\n",
-                  (unsigned)(mem / (1024 * 1024)));
+    log_info("mem: %d MB available", (unsigned)(mem / (1024 * 1024)));
 
+    log_raw("\n");
     kheap_init();
 
+    log_raw("\n");
     pit_init(100);
     keyboard_init();
     sched_init();
 
+    log_raw("\n");
     vmm_init();
     tss_init();
-    serial_puts("[tss] task register loaded\n");
 
+    log_raw("\n");
     struct kernel_api api;
     api.kmalloc = kmalloc;
     api.kfree = kfree;
@@ -78,14 +83,17 @@ void kmain(uint32_t mboot_info) {
     module_subsystem_init();
     module_load_all(&api);
 
+    log_raw("\n");
     pci_init();
+
+    log_raw("\n");
     ahci_init();
 
     uint8_t buf[512];
     for (int p = 0; p < ahci_port_count(); p++) {
         int ret = ahci_read(p, 0, buf, 1);
         if (ret > 0) {
-            serial_printf("[ahci] port %d: sector 0 read OK\n", p);
+            log_info("ahci: port %d sector 0 read OK", p);
             break;
         }
     }
@@ -93,6 +101,7 @@ void kmain(uint32_t mboot_info) {
     memset(buf, 0xAA, 512);
     ahci_write(0, 1024, buf, 1);
 
+    log_raw("\n");
     /* Mount SwiftFS v2 and prepare userland */
     if (swiftfs2_mount(0) == 0) {
         /* Create /bin/ directory */
@@ -108,7 +117,7 @@ void kmain(uint32_t mboot_info) {
             _binary_build_echo_elf_start, _binary_build_echo_elf_end);
         swiftfs2_sync();
 
-        /* Read shell and launch it via ELF loader */
+        /* Read shell and create init process (PID 1) */
         int fd = swiftfs2_open("/bin/shell", O_RDONLY);
         if (fd >= 0) {
             uint32_t cap = 65536, size = 0;
@@ -131,21 +140,40 @@ void kmain(uint32_t mboot_info) {
             if (size > 0) {
                 uint64_t entry;
                 if (elf64_load(data, &entry) == 0) {
-                    serial_puts("[kmain] launching shell\n");
-                    uint64_t kernel_rsp = (uint64_t)stack_top;
-                    tss_set_kernel_stack(kernel_rsp);
-                    syscall_kernel_rsp = kernel_rsp;
-                    user_entry(entry, 0x7F003000);
+                    log_info("kernel: creating init process (PID 1)");
+
+                    uint64_t init_kstack = (uint64_t)page_alloc();
+                    if (init_kstack) {
+                        int pid = proc_create(entry, 0x7F003000,
+                                              vmm_read_cr3(), init_kstack);
+                        if (pid < 0) {
+                            log_fail("kernel: proc_create failed");
+                        } else {
+                            log_ok("kernel: init process created (PID %d)", pid);
+                        }
+                    }
                 } else {
-                    serial_printf("[kmain] elf64_load failed for shell\n");
+                    log_fail("kernel: elf64_load failed for shell");
                 }
             }
             kfree(data);
         }
     }
 
-    extern void user_proc_init(void);
-    user_proc_init();
-    __asm__("sti");
+    /* Register init in scheduler and launch directly via user_entry */
+    current_idx = proc_index(1);
+    if (current_idx < 0) {
+        log_fail("kernel: init process not found");
+        for (;;) __asm__("hlt");
+    }
+    sched_run();
+
+    log_raw("\n");
+    log_ok("Reached target Multi-User System\n");
+
+    log_raw("Run /bin/shell as init process\n\n");
+    extern void user_entry(uint64_t entry, uint64_t rsp);
+    user_entry(0x8000000, 0x7F003000);
+
     for (;;) __asm__("hlt");
 }

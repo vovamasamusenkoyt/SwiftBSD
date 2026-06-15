@@ -197,9 +197,9 @@ void _start(void) {
         while (*p == ' ') p++;
         const char *args = p;
 
-        if (cmd_len == 4 && strncmp(cmd_start, "exit", 4) == 0) exit();
-        if (cmd_len == 4 && strncmp(cmd_start, "halt", 4) == 0) halt();
-        if (cmd_len == 4 && strncmp(cmd_start, "quit", 4) == 0) exit();
+        if (cmd_len == 4 && strncmp(cmd_start, "exit", 4) == 0) { _exit(0); }
+        if (cmd_len == 4 && strncmp(cmd_start, "halt", 4) == 0) { halt(); }
+        if (cmd_len == 4 && strncmp(cmd_start, "quit", 4) == 0) { _exit(0); }
 
         if (cmd_len == 2 && strncmp(cmd_start, "cd", 2) == 0) {
             char buf[256];
@@ -238,11 +238,26 @@ void _start(void) {
         for (i = 0; args[i] && i < 255; i++) ARGS_PAGE[i] = args[i];
         ARGS_PAGE[i] = 0;
 
-        int ret = exec(path, ARGS_PAGE);
-        if (ret < 0) {
-            print("? unknown cmd (try: ls, cat, echo, exit, halt, cd, free, mem)\n");
+        int pid = fork();
+        if (pid < 0) {
+            print("fork failed\n");
+            continue;
+        }
+        if (pid == 0) {
+            /* Child: exec the command */
+            int ret = exec(path, ARGS_PAGE);
+            if (ret < 0) {
+                print("? unknown cmd (try: ls, cat, echo, exit, halt, cd, free, mem)\n");
+            }
+            _exit(1);
+        }
+        /* Parent: wait for child */
+        int status;
+        int wpid = wait(&status);
+        if (wpid < 0) {
+            print("wait failed\n");
         }
     }
 
-    exit();
+    _exit(0);
 }

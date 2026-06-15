@@ -78,6 +78,7 @@ isr_irq 46, 14
 isr_irq 47, 15
 
 exception_common:
+    cli
     push r15
     push r14
     push r13
@@ -117,6 +118,7 @@ exception_common:
     iretq
 
 irq_common:
+    cli
     push r15
     push r14
     push r13

@@ -18,8 +18,8 @@ void kheap_init(void) {
     heap_head->free = 1;
     heap_head->next = 0;
 
-    serial_printf("[kheap] pool at %x, %d bytes\n",
-                  (unsigned)(uintptr_t)heap_pool, KHEAP_SIZE);
+    log_info("kheap: pool at 0x%x (%d bytes)",
+             (unsigned)(uintptr_t)heap_pool, KHEAP_SIZE);
 }
 
 void *kmalloc(size_t size) {

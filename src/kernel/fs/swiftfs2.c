@@ -832,10 +832,9 @@ int swiftfs2_mount(int ahci_port) {
 
     g_curr_group = 0;
     g_mounted = 1;
-    serial_printf("[fs] mounted: %u blocks, %u inodes, "
-                  "%d groups, %u free\n",
-                  (unsigned)sb.num_blocks, (unsigned)sb.inode_count,
-                  g_nr_groups, (unsigned)sb.free_blocks);
+    log_info("swiftfs: Mounted (%u blocks, %u inodes, %d groups, %u free)",
+             (unsigned)sb.num_blocks, (unsigned)sb.inode_count,
+             g_nr_groups, (unsigned)sb.free_blocks);
     return 0;
 }
 

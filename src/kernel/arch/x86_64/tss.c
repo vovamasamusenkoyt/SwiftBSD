@@ -36,7 +36,7 @@ static struct tss *tss;
 void tss_init(void) {
     uint64_t phys = page_alloc();
     if (!phys) {
-        serial_puts("[tss] OOM\n");
+        log_fail("tss: OOM allocating TSS");
         for (;;) __asm__("hlt");
     }
 
@@ -50,7 +50,7 @@ void tss_init(void) {
         tss->rsp[0] = stack + 4096;
         tss->ist[1] = stack + 4096;
     } else {
-        serial_puts("[tss] stack OOM\n");
+        log_fail("tss: OOM allocating stack");
         for (;;) __asm__("hlt");
     }
 
@@ -62,9 +62,9 @@ void tss_init(void) {
     uint16_t gdt_limit = *(uint16_t *)&gdt_raw[0];
     uint64_t gdt_base  = *(uint32_t *)&gdt_raw[2];
 
-    serial_printf("[tss] GDT base=%x limit=%x\n",
-                  (unsigned)(gdt_base & 0xFFFFFFFF),
-                  (unsigned)gdt_limit);
+    log_info("tss: GDT base=0x%x limit=0x%x",
+             (unsigned)(gdt_base & 0xFFFFFFFF),
+             (unsigned)gdt_limit);
 
     struct gdt_tss_descriptor *tss_entry = (struct gdt_tss_descriptor *)(gdt_base + 0x28);
 
@@ -80,8 +80,9 @@ void tss_init(void) {
     uint16_t tr = 0x28;
     __asm__ volatile("ltr %0" : : "r"(tr));
 
-    serial_printf("[tss] TSS at %x, stack %x\n",
-                  (unsigned)tss_paddr, (unsigned)stack);
+    log_ok("tss: Task register loaded");
+    log_info("tss: TSS at 0x%x, stack 0x%x",
+             (unsigned)tss_paddr, (unsigned)stack);
 }
 
 void tss_set_kernel_stack(uint64_t rsp0) {

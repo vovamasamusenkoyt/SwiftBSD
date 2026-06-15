@@ -3,6 +3,7 @@
 #include "kernel.h"
 #include "pmm.h"
 #include "vmm.h"
+#include "sched.h"
 
 void keyboard_irq(void);
 void timer_irq(void);
@@ -78,6 +79,26 @@ void exception_handler(struct exception_frame *frame) {
         int pf_present  = frame->error_code & 1;
         int pf_write    = frame->error_code & 2;
         int pf_user     = frame->error_code & 4;
+
+        if (pf_present && pf_write && cr2 >= 0x1000000) {
+            uint64_t page     = cr2 & ~0xFFF;
+            uint64_t cur_cr3  = vmm_read_cr3();
+            uint64_t new_phys = page_alloc();
+            if (!new_phys) {
+                serial_printf("[pf] OOM at %x\n", cr2);
+                for (;;) __asm__("hlt");
+            }
+            __asm__ volatile("cli");
+            uint64_t bounce[512];
+            for (int i = 0; i < 512; i++)
+                bounce[i] = ((volatile uint64_t *)page)[i];
+            vmm_map_in_cr3(cur_cr3, page, new_phys,
+                           PG_PRESENT | PG_WRITE | PG_USER | PG_NX);
+            for (int i = 0; i < 512; i++)
+                ((volatile uint64_t *)page)[i] = bounce[i];
+            __asm__ volatile("sti");
+            return;
+        }
 
         if (!pf_present && pf_write && cr2 >= 0x1000000) {
             uint64_t page = cr2 & ~0xFFF;

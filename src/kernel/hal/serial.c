@@ -30,9 +30,7 @@ void serial_puts(const char *s) {
     }
 }
 
-void serial_printf(const char *fmt, ...) {
-    __builtin_va_list args;
-    __builtin_va_start(args, fmt);
+void serial_vprintf(const char *fmt, __builtin_va_list args) {
     for (const char *p = fmt; *p; p++) {
         if (*p != '%') {
             serial_putc(*p);
@@ -105,6 +103,12 @@ void serial_printf(const char *fmt, ...) {
             break;
         }
     }
+}
+
+void serial_printf(const char *fmt, ...) {
+    __builtin_va_list args;
+    __builtin_va_start(args, fmt);
+    serial_vprintf(fmt, args);
     __builtin_va_end(args);
 }
 

@@ -403,16 +403,16 @@ int ahci_write(int port, uint64_t lba, const void *buf, int count) {
 int ahci_init(void) {
     pci_dev_t *dev = pci_find(0x01, 0x06, 0x01);
     if (!dev) {
-        serial_puts("[ahci] no AHCI controller found\n");
+        log_warn("ahci: no AHCI controller found");
         return 0;
     }
 
-    serial_printf("[ahci] at %x:%x.%d\n",
-                  (unsigned)dev->bus, (unsigned)dev->slot, (unsigned)dev->func);
+    log_info("ahci: AHCI controller at %x:%x.%d",
+             (unsigned)dev->bus, (unsigned)dev->slot, (unsigned)dev->func);
 
     uint64_t abar_phys = dev->bar[5];
     if (abar_phys & 1) {
-        serial_puts("[ahci] BAR5 is not memory-mapped\n");
+        log_fail("ahci: BAR5 is not memory-mapped");
         return 0;
     }
 
@@ -438,13 +438,13 @@ int ahci_init(void) {
         if (!(pi & (1u << i))) continue;
         ports[i].regs = &abar[(0x100 + i * 0x80) / 4];
         ports[i].present = 1;
-        serial_printf("[ahci] port %d: abar=%p regs=%p\n",
-                      i, (void*)abar, (void*)ports[i].regs);
-        if (ahci_port_init(&ports[i], i))
+        if (ahci_port_init(&ports[i], i)) {
+            log_info("ahci: port %d registered", i);
             active++;
+        }
     }
     if (active)
-        serial_printf("[ahci] %d port(s) active\n", active);
+        log_info("ahci: %d active port(s)", active);
 
     ahci_ok = 1;
     return 1;

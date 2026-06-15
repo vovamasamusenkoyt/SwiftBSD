@@ -13,6 +13,9 @@
 #define SC_FSTAT 9
 #define SC_HALT  10
 #define SC_MEMINFO 11
+#define SC_FORK   12
+#define SC_WAIT   13
+#define SC_GETPID 14
 
 #define O_RDONLY    0
 #define O_WRONLY    1
@@ -44,8 +47,12 @@ static int write(int fd, const void *b, unsigned long sz) { return syscall(SC_WR
 static int close(int fd) { return syscall(SC_CLOSE, fd, 0, 0); }
 static int fstat(int fd, stat_t *st) { return syscall(SC_FSTAT, fd, (long)st, 0); }
 static int exec(const char *p, const char *args) { return syscall(SC_EXEC, (long)p, (long)args, 0); }
-static void exit(void) { syscall(SC_EXIT, 0, 0, 0); }
+static void _exit(int code) { syscall(SC_EXIT, code, 0, 0); }
+static void exit(void) { _exit(0); }
 static void halt(void) { syscall(SC_HALT, 0, 0, 0); }
+static int fork(void) { return syscall(SC_FORK, 0, 0, 0); }
+static int wait(int *status) { return syscall(SC_WAIT, (long)status, 0, 0); }
+static int getpid(void) { return syscall(SC_GETPID, 0, 0, 0); }
 
 static int strcmp(const char *a, const char *b) {
     while (*a && *a == *b) { a++; b++; }

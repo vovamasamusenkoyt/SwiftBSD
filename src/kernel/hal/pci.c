@@ -98,7 +98,7 @@ int pci_init(void) {
     ndevices = 0;
     scan_bus_recursive(0);
 
-    serial_printf("[pci] %d devices\n", ndevices);
+    log_info("pci: %d devices", ndevices);
     return ndevices;
 }
 

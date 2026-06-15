@@ -89,9 +89,9 @@ void pmm_init(uint32_t mboot_info) {
         }
     }
 
-    serial_printf("[pmm] %d pages free, last PF %d\n",
-                  (unsigned int)free_page_count,
-                  (unsigned int)last_phys_page);
+    log_info("pmm: %d pages free, last PFN %d",
+             (unsigned int)free_page_count,
+             (unsigned int)last_phys_page);
 }
 
 uint64_t page_alloc(void) {
@@ -102,7 +102,7 @@ uint64_t page_alloc(void) {
             return i * PAGE_SIZE;
         }
     }
-    serial_puts("[pmm] OUT OF MEMORY\n");
+    log_fail("pmm: OUT OF MEMORY");
     return 0;
 }
 

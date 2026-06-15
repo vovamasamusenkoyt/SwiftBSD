@@ -7,8 +7,11 @@
 .align 8
 .global syscall_kernel_rsp
 syscall_kernel_rsp: .quad 0
+.global user_rsp_save
 user_rsp_save: .quad 0
 retval_save: .quad 0
+.global syscall_frame_ptr
+syscall_frame_ptr: .quad 0
 
 .section .text
 .global syscall_entry
@@ -24,6 +27,8 @@ syscall_entry:
     push r9
     push r10
     push r11
+
+    mov [syscall_frame_ptr], rsp
 
     mov rdi, rax
     mov rsi, [rsp+56]

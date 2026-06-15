@@ -17,64 +17,11 @@
 #define SC_FSTAT 9
 #define SC_HALT  10
 #define SC_MEMINFO 11
+#define SC_FORK  12
+#define SC_WAIT  13
+#define SC_GETPID 14
 
 #define ARGS_PAGE ((char *)0x7F004000)
-
-static void exec_user_binary(const char *path, uint64_t rsp) {
-    int fd = swiftfs2_open(path, O_RDONLY);
-    if (fd < 0) return;
-
-    uint32_t size = 0, cap = 65536;
-    uint8_t *file_data = kmalloc(cap);
-    if (!file_data) { swiftfs2_close(fd); return; }
-
-    uint8_t tmp[512];
-    int n;
-    while ((n = swiftfs2_read(fd, tmp, sizeof(tmp))) > 0) {
-        if (size + n > cap) {
-            cap *= 2;
-            uint8_t *np = kmalloc(cap);
-            memcpy(np, file_data, size);
-            kfree(file_data);
-            file_data = np;
-        }
-        memcpy(file_data + size, tmp, n);
-        size += n;
-    }
-    swiftfs2_close(fd);
-    if (size == 0) { kfree(file_data); return; }
-
-    if (size >= 64) {
-        uint64_t vmagic = *(uint32_t *)file_data;
-        uint64_t ventry = *(uint64_t *)&file_data[0x18];
-        serial_printf("[exec_user] file=%s size=%u magic=%x entry=%x\n",
-                      path, (unsigned)size, (unsigned)vmagic,
-                      (unsigned)ventry);
-    }
-
-    uint64_t entry;
-    if (elf64_load(file_data, &entry) < 0) {
-        serial_printf("[exec_user] elf64_load FAILED for %s\n", path);
-        kfree(file_data);
-        return;
-    }
-    kfree(file_data);
-
-    serial_printf("[exec_user] elf64_load OK entry=%x rsp=%x\n",
-                  (unsigned)entry, (unsigned)rsp);
-    extern void user_entry(uint64_t entry, uint64_t rsp);
-    extern uint64_t syscall_kernel_rsp;
-    extern uint64_t stack_top[];
-    extern void tss_set_kernel_stack(uint64_t rsp0);
-    uint64_t krsp = (uint64_t)stack_top;
-    tss_set_kernel_stack(krsp);
-    syscall_kernel_rsp = krsp;
-    if (entry == 0) {
-        serial_puts("[exec_user] ERROR: entry is 0!\n");
-        for (;;) __asm__("hlt");
-    }
-    user_entry(entry, rsp);
-}
 
 uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
     switch (num) {
@@ -179,12 +126,6 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t ar
             serial_printf("[exec] entry=%x rsp=%x\n",
                           (unsigned)entry, (unsigned)0x7F003000);
             extern void user_entry(uint64_t entry, uint64_t rsp);
-            extern uint64_t syscall_kernel_rsp;
-            extern uint64_t stack_top[];
-            extern void tss_set_kernel_stack(uint64_t rsp0);
-            uint64_t krsp = (uint64_t)stack_top;
-            tss_set_kernel_stack(krsp);
-            syscall_kernel_rsp = krsp;
             if (entry == 0) {
                 serial_puts("[exec] ERROR: entry is 0!\n");
                 for (;;) __asm__("hlt");
@@ -195,9 +136,9 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t ar
     case SC_FSTAT:
         return swiftfs2_fstat((int)arg1, (swiftfs2_stat_t *)arg2);
     case SC_EXIT:
-        serial_puts("[user] exit, relaunching shell\n");
-        exec_user_binary("/bin/shell", 0x7F003000);
-        for (;;) __asm__("hlt");
+        serial_printf("[user] PID %d exit\n", procs[current_idx].pid);
+        proc_exit((int)arg1);
+        __builtin_unreachable();
     case SC_HALT:
         serial_puts("[user] halt\n");
         for (;;) __asm__("hlt");
@@ -208,6 +149,20 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t ar
             buf[1] = pmm_free_count();
         }
         break;
+    case SC_FORK:
+        return proc_fork();
+    case SC_WAIT:
+        {
+            int code;
+            int ret = proc_wait(&code);
+            if (ret > 0 && arg1) {
+                int *uptr = (int *)arg1;
+                *uptr = code;
+            }
+            return ret;
+        }
+    case SC_GETPID:
+        return procs[current_idx].pid;
     }
     return 0;
 }
