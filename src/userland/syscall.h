@@ -19,9 +19,8 @@
 
 static long syscall(long num, long a1, long a2, long a3) {
     long ret;
-    register long r10 asm("r10") = a3;
     asm volatile("syscall" : "=a"(ret)
-                 : "a"(num), "D"(a1), "S"(a2), "d"(a3), "r"(r10)
+                 : "a"(num), "D"(a1), "S"(a2), "d"(a3)
                  : "rcx", "r11", "memory");
     return ret;
 }

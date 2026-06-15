@@ -15,7 +15,7 @@ LDFLAGS := -T linker.ld -nostdlib -z max-page-size=0x1000 -Map=build/kernel.map
 
 USERLAND_CC := gcc
 USERLAND_CFLAGS := -ffreestanding -nostdlib -static -no-pie -mno-red-zone \
-                   -O2 -I src/userland -fno-stack-protector
+                    -O2 -I src/userland -fno-stack-protector -fno-builtin
 USERLAND_LDFLAGS := -T src/userland/user.ld -nostdlib -static -no-pie
 
 USERLAND_PROGS := shell ls cat echo

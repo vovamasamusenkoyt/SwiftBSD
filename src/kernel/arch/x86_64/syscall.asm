@@ -16,25 +16,32 @@ syscall_entry:
     mov [user_rsp_save], rsp
     mov rsp, [syscall_kernel_rsp]
 
+    push rdi
+    push rsi
+    push rdx
     push rcx
+    push r8
+    push r9
+    push r10
     push r11
-    push [user_rsp_save]
 
-    mov r8, rdi
     mov rdi, rax
-    mov rax, r8
-    mov r8, rdx
-    mov rdx, rsi
-    mov rsi, rax
-    mov rcx, r8
+    mov rsi, [rsp+56]
+    mov rdx, [rsp+48]
+    mov rcx, [rsp+40]
     call syscall_handler
 
     mov [retval_save], rax
 
-    pop rax
     pop r11
+    pop r10
+    pop r9
+    pop r8
     pop rcx
-    mov rsp, rax
+    pop rdx
+    pop rsi
+    pop rdi
 
     mov rax, [retval_save]
+    mov rsp, [user_rsp_save]
     sysretq
