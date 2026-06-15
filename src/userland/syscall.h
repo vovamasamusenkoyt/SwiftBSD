@@ -11,12 +11,16 @@
 #define SC_EXEC  7
 #define SC_EXIT  8
 #define SC_FSTAT 9
+#define SC_HALT  10
+#define SC_MEMINFO 11
 
 #define O_RDONLY    0
 #define O_WRONLY    1
 #define O_RDWR      2
 #define O_CREAT     0x100
 #define O_TRUNC     0x200
+
+#define ARGS_PAGE ((char *)0x7F004000)
 
 static long syscall(long num, long a1, long a2, long a3) {
     long ret;
@@ -39,8 +43,9 @@ static int read(int fd, void *b, unsigned long sz) { return syscall(SC_READ, fd,
 static int write(int fd, const void *b, unsigned long sz) { return syscall(SC_WRITE, fd, (long)b, sz); }
 static int close(int fd) { return syscall(SC_CLOSE, fd, 0, 0); }
 static int fstat(int fd, stat_t *st) { return syscall(SC_FSTAT, fd, (long)st, 0); }
-static void exec(const char *p) { syscall(SC_EXEC, (long)p, 0, 0); }
+static int exec(const char *p, const char *args) { return syscall(SC_EXEC, (long)p, (long)args, 0); }
 static void exit(void) { syscall(SC_EXIT, 0, 0, 0); }
+static void halt(void) { syscall(SC_HALT, 0, 0, 0); }
 
 static int strcmp(const char *a, const char *b) {
     while (*a && *a == *b) { a++; b++; }

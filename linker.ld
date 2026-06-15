@@ -32,11 +32,12 @@ SECTIONS
         *(.data.*)
     }
 
-    .bss : ALIGN(16) {
+    .bss : ALIGN(4096) {
         _bss_start = .;
         *(COMMON)
         *(.bss)
         *(.bss.*)
+        *(.lbss)
         _bss_end = .;
     }
 

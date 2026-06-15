@@ -1,10 +1,18 @@
 CC := gcc
+
+RUSTC := rustc
+RUSTFLAGS := -C panic=abort -C opt-level=s -C link-args=-nostartfiles
+QEMU := qemu-system-x86_64
+
+# Rust module, built unconditionally (rustc works outside sandbox)
+RUST_MODULE := build-rust/test_module.a
+
 CFLAGS := -ffreestanding -nostdlib -mno-red-zone -mno-mmx -mno-sse \
            -mcmodel=large -Wall -Wextra -O2 -fno-stack-protector \
            -fno-omit-frame-pointer -I src/kernel -I src/kernel/arch/x86_64 \
            -I src/kernel/hal -I src/kernel/mm -I src/kernel/sched \
             -I src/kernel/user -I src/kernel/modules -I src/kernel/fs \
-           -D__is_kernel -DNO_RUST_MODULE
+           -D__is_kernel
 
 ASM := gcc
 ASMFLAGS := -ffreestanding -nostdlib -I src/kernel \
@@ -15,16 +23,13 @@ LDFLAGS := -T linker.ld -nostdlib -z max-page-size=0x1000 -Map=build/kernel.map
 
 USERLAND_CC := gcc
 USERLAND_CFLAGS := -ffreestanding -nostdlib -static -no-pie -mno-red-zone \
-                    -O2 -I src/userland -fno-stack-protector -fno-builtin
+                    -mno-mmx -mno-sse -O2 -I src/userland \
+                    -fno-stack-protector -fno-builtin
 USERLAND_LDFLAGS := -T src/userland/user.ld -nostdlib -static -no-pie
 
 USERLAND_PROGS := shell ls cat echo
 USERLAND_ELFS := $(addprefix build/,$(addsuffix .elf,$(USERLAND_PROGS)))
 USERLAND_OBJS := $(addprefix build/,$(addsuffix _elf.o,$(USERLAND_PROGS)))
-
-RUSTC := rustc
-QEMU := qemu-system-x86_64
-QEMU := qemu-system-x86_64
 
 OBJS := \
 	build/bootstrap.o \
@@ -53,17 +58,19 @@ OBJS := \
 	build/string.o \
 	build/swiftfs2.o \
 	build/elf.o \
+	$(RUST_MODULE) \
 	$(USERLAND_OBJS)
 
 .PHONY: all iso run clean rust-module
 
 all: build/kernel.elf
 
-build/test_module.a: src/modules/test_module/lib.rs | build
-	$(RUSTC) --crate-type staticlib --target x86_64-unknown-none \
+build-rust/test_module.a: src/modules/test_module/lib.rs
+	mkdir -p build-rust
+	$(RUSTC) $(RUSTFLAGS) --crate-type staticlib --target x86_64-unknown-none \
 		-o $@ $<
 
-rust-module: build/test_module.a
+rust-module: build-rust/test_module.a
 
 build/kernel.elf: $(OBJS) linker.ld | build
 	$(LD) $(LDFLAGS) -o $@ $(OBJS)
@@ -138,4 +145,4 @@ run: iso build/disk.img
 		-nographic -m 256M
 
 clean:
-	rm -rf build
+	rm -rf build build-rust

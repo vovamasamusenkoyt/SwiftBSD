@@ -309,7 +309,7 @@ static uint32_t bmap_read(swiftfs2_inode_t *inode, uint32_t lblock,
 static const char *path_next(const char *path, char *buf, int *len) {
     if (!path) return 0;
     while (*path == '/') path++;
-    if (!*path) return 0;
+    if (!*path) { *len = 0; return 0; }
     int i = 0;
     while (path[i] && path[i] != '/' && i < SWIFTFS2_NAME_MAX - 1) {
         buf[i] = path[i];
@@ -592,14 +592,23 @@ static int dir_add_entry(uint32_t dir_ino, const char *name,
             dir_in.block_count++;
             inode_write(dir_ino, &dir_in);
 
-            /* New block: write entry at start with full block as rec_len */
+            /* New block: write entry and leave remainder as free */
             {
                 swiftfs2_dirent_t *de = (swiftfs2_dirent_t *)data;
                 de->inode = child_ino;
-                de->rec_len = SWIFTFS2_BLOCK_SIZE;
                 de->name_len = nlen;
                 de->file_type = file_type;
                 memcpy(de->name, name, nlen);
+                uint16_t rem = SWIFTFS2_BLOCK_SIZE - reclen;
+                if (rem >= sizeof(swiftfs2_dirent_t)) {
+                    de->rec_len = reclen;
+                    swiftfs2_dirent_t *next =
+                        (swiftfs2_dirent_t *)(data + reclen);
+                    next->inode = 0;
+                    next->rec_len = rem;
+                } else {
+                    de->rec_len = SWIFTFS2_BLOCK_SIZE;
+                }
                 cache_mark_dirty(pblock, 0);
                 return 0;
             }

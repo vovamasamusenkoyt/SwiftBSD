@@ -113,20 +113,18 @@ static int ahci_ok;
 #define reg32(addr)  (*(volatile uint32_t *)(uintptr_t)(addr))
 
 static void ahci_map_mmio(uint64_t phys, int pages) {
-    static uint64_t mmio_virt = 0xFFFFFFFF80000000ULL;
     for (int i = 0; i < pages; i++) {
-        vmm_map(mmio_virt + i * 4096, phys + i * 4096, PG_PRESENT | PG_WRITE);
+        vmm_map(phys + i * 4096, phys + i * 4096, PG_PRESENT | PG_WRITE);
     }
-    abar = (volatile uint32_t *)mmio_virt;
-    mmio_virt += pages * 4096;
-}
-
-static void ahci_port_write(ahci_port_t *p, int reg, uint32_t val) {
-    reg32((uintptr_t)&p->regs[reg / 4]) = val;
+    abar = (volatile uint32_t *)(uintptr_t)phys;
 }
 
 static uint32_t ahci_port_read(ahci_port_t *p, int reg) {
-    return reg32((uintptr_t)&p->regs[reg / 4]);
+    return abar[(0x100 + (p - ports) * 0x80 + reg) / 4];
+}
+
+static void ahci_port_write(ahci_port_t *p, int reg, uint32_t val) {
+    abar[(0x100 + (p - ports) * 0x80 + reg) / 4] = val;
 }
 
 /* ------------------------------------------------------------------ */
@@ -440,6 +438,8 @@ int ahci_init(void) {
         if (!(pi & (1u << i))) continue;
         ports[i].regs = &abar[(0x100 + i * 0x80) / 4];
         ports[i].present = 1;
+        serial_printf("[ahci] port %d: abar=%p regs=%p\n",
+                      i, (void*)abar, (void*)ports[i].regs);
         if (ahci_port_init(&ports[i], i))
             active++;
     }

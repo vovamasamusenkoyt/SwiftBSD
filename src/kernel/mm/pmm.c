@@ -80,8 +80,9 @@ void pmm_init(uint32_t mboot_info) {
         addr += (tag->size + 7) & ~7;
     }
 
-    uint64_t bss_end_page = (uint64_t)_bss_end / PAGE_SIZE;
-    for (uint64_t i = 0; i <= bss_end_page; i++) {
+    uint64_t kernel_end = (uint64_t)_bss_end + KHEAP_SIZE;
+    uint64_t kernel_end_page = (kernel_end + PAGE_SIZE - 1) / PAGE_SIZE;
+    for (uint64_t i = 0; i < kernel_end_page; i++) {
         if (!bitmap_test(i)) {
             bitmap_set(i);
             free_page_count--;

@@ -95,23 +95,21 @@ void kmain(uint32_t mboot_info) {
 
     /* Mount SwiftFS v2 and prepare userland */
     if (swiftfs2_mount(0) == 0) {
-        /* Create /usr/ and /usr/bin/ directories */
-        swiftfs2_mkdir("/usr", 0755);
-        swiftfs2_mkdir("/usr/bin", 0755);
+        /* Create /bin/ directory */
+        swiftfs2_mkdir("/bin", 0755);
 
-        /* Write embedded ELF programs to /usr/bin/ */
-        write_if_missing("/usr/bin/shell",
+        write_if_missing("/bin/shell",
             _binary_build_shell_elf_start, _binary_build_shell_elf_end);
-        write_if_missing("/usr/bin/ls",
+        write_if_missing("/bin/ls",
             _binary_build_ls_elf_start, _binary_build_ls_elf_end);
-        write_if_missing("/usr/bin/cat",
+        write_if_missing("/bin/cat",
             _binary_build_cat_elf_start, _binary_build_cat_elf_end);
-        write_if_missing("/usr/bin/echo",
+        write_if_missing("/bin/echo",
             _binary_build_echo_elf_start, _binary_build_echo_elf_end);
         swiftfs2_sync();
 
         /* Read shell and launch it via ELF loader */
-        int fd = swiftfs2_open("/usr/bin/shell", O_RDONLY);
+        int fd = swiftfs2_open("/bin/shell", O_RDONLY);
         if (fd >= 0) {
             uint32_t cap = 65536, size = 0;
             uint8_t *data = kmalloc(cap);
@@ -137,7 +135,7 @@ void kmain(uint32_t mboot_info) {
                     uint64_t kernel_rsp = (uint64_t)stack_top;
                     tss_set_kernel_stack(kernel_rsp);
                     syscall_kernel_rsp = kernel_rsp;
-                    user_entry(entry, 0x7F002000);
+                    user_entry(entry, 0x7F003000);
                 } else {
                     serial_printf("[kmain] elf64_load failed for shell\n");
                 }

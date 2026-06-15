@@ -29,10 +29,25 @@ static uint64_t pml4_lookup(uint64_t virt) {
     return (virt >> 39) & 0x1FF;
 }
 
-static uint64_t *get_or_alloc_table(uint64_t *parent, int idx, int is_pd) {
+static uint64_t *get_or_alloc_table(uint64_t *parent, int idx, int is_pd, int user) {
     if (parent[idx] & PG_PRESENT) {
-        if (is_pd && (parent[idx] & PG_HUGE))
-            return 0;
+        if (is_pd && (parent[idx] & PG_HUGE)) {
+            uint64_t huge = parent[idx];
+            uint64_t phys_base = huge & ~((1ULL << 21) - 1);
+            uint64_t pt_flags = huge & 0x1FF;
+            pt_flags &= ~PG_HUGE;
+            if (huge & PG_NX) pt_flags |= PG_NX;
+
+            uint64_t pt_paddr = page_alloc();
+            if (!pt_paddr) return 0;
+            for (int i = 0; i < 512; i++)
+                ((uint64_t *)pt_paddr)[i] = 0;
+            for (int i = 0; i < 512; i++)
+                ((uint64_t *)pt_paddr)[i] = (phys_base + i * 0x1000) | pt_flags;
+
+            parent[idx] = pt_paddr | PG_PRESENT | PG_WRITE | (user ? PG_USER : 0);
+            return (uint64_t *)pt_paddr;
+        }
         return (uint64_t *)(uintptr_t)(parent[idx] & ~0xFFF);
     }
 
@@ -42,7 +57,7 @@ static uint64_t *get_or_alloc_table(uint64_t *parent, int idx, int is_pd) {
     for (int i = 0; i < 512; i++)
         ((uint64_t *)paddr)[i] = 0;
 
-    parent[idx] = paddr | PG_PRESENT | PG_WRITE | PG_USER;
+    parent[idx] = paddr | PG_PRESENT | PG_WRITE | (user ? PG_USER : 0);
     return (uint64_t *)paddr;
 }
 
@@ -52,9 +67,10 @@ void vmm_map(uint64_t virt, uint64_t phys, uint64_t flags) {
     int pd_idx   = pd_lookup(virt);
     int pt_idx   = pt_lookup(virt);
 
-    uint64_t *pdpt = get_or_alloc_table(page_pml4, pml4_idx, 0);
-    uint64_t *pd   = get_or_alloc_table(pdpt, pdpt_idx, 0);
-    uint64_t *pt   = get_or_alloc_table(pd, pd_idx, 1);
+    int user = pml4_idx < 256;
+    uint64_t *pdpt = get_or_alloc_table(page_pml4, pml4_idx, 0, user);
+    uint64_t *pd   = get_or_alloc_table(pdpt, pdpt_idx, 0, user);
+    uint64_t *pt   = get_or_alloc_table(pd, pd_idx, 1, user);
 
     if (!pt) {
         serial_puts("[vmm] map: out of memory\n");

@@ -3,6 +3,7 @@
 #include "swiftfs2.h"
 #include "elf.h"
 #include "string.h"
+#include "pmm.h"
 
 #define SC_PUTS  0
 #define SC_NOP   1
@@ -14,6 +15,66 @@
 #define SC_EXEC  7
 #define SC_EXIT  8
 #define SC_FSTAT 9
+#define SC_HALT  10
+#define SC_MEMINFO 11
+
+#define ARGS_PAGE ((char *)0x7F004000)
+
+static void exec_user_binary(const char *path, uint64_t rsp) {
+    int fd = swiftfs2_open(path, O_RDONLY);
+    if (fd < 0) return;
+
+    uint32_t size = 0, cap = 65536;
+    uint8_t *file_data = kmalloc(cap);
+    if (!file_data) { swiftfs2_close(fd); return; }
+
+    uint8_t tmp[512];
+    int n;
+    while ((n = swiftfs2_read(fd, tmp, sizeof(tmp))) > 0) {
+        if (size + n > cap) {
+            cap *= 2;
+            uint8_t *np = kmalloc(cap);
+            memcpy(np, file_data, size);
+            kfree(file_data);
+            file_data = np;
+        }
+        memcpy(file_data + size, tmp, n);
+        size += n;
+    }
+    swiftfs2_close(fd);
+    if (size == 0) { kfree(file_data); return; }
+
+    if (size >= 64) {
+        uint64_t vmagic = *(uint32_t *)file_data;
+        uint64_t ventry = *(uint64_t *)&file_data[0x18];
+        serial_printf("[exec_user] file=%s size=%u magic=%x entry=%x\n",
+                      path, (unsigned)size, (unsigned)vmagic,
+                      (unsigned)ventry);
+    }
+
+    uint64_t entry;
+    if (elf64_load(file_data, &entry) < 0) {
+        serial_printf("[exec_user] elf64_load FAILED for %s\n", path);
+        kfree(file_data);
+        return;
+    }
+    kfree(file_data);
+
+    serial_printf("[exec_user] elf64_load OK entry=%x rsp=%x\n",
+                  (unsigned)entry, (unsigned)rsp);
+    extern void user_entry(uint64_t entry, uint64_t rsp);
+    extern uint64_t syscall_kernel_rsp;
+    extern uint64_t stack_top[];
+    extern void tss_set_kernel_stack(uint64_t rsp0);
+    uint64_t krsp = (uint64_t)stack_top;
+    tss_set_kernel_stack(krsp);
+    syscall_kernel_rsp = krsp;
+    if (entry == 0) {
+        serial_puts("[exec_user] ERROR: entry is 0!\n");
+        for (;;) __asm__("hlt");
+    }
+    user_entry(entry, rsp);
+}
 
 uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
     switch (num) {
@@ -31,7 +92,6 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t ar
         {
             int fd = (int)arg1;
             if (fd == 0) {
-                /* stdin: read from serial port */
                 char *buf = (char *)arg2;
                 uint32_t sz = (uint32_t)arg3;
                 for (uint32_t i = 0; i < sz; i++)
@@ -44,7 +104,6 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t ar
         {
             int fd = (int)arg1;
             if (fd == 0 || fd == 1) {
-                /* stdout: write to serial port */
                 const char *buf = (const char *)arg2;
                 uint32_t sz = (uint32_t)arg3;
                 for (uint32_t i = 0; i < sz; i++)
@@ -56,11 +115,22 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t ar
     case SC_CLOSE:
         {
             int fd = (int)arg1;
-            if (fd <= 1) return 0; /* stdin/stdout: no-op */
+            if (fd <= 1) return 0;
             return swiftfs2_close(fd);
         }
     case SC_EXEC:
         {
+            /* Copy args from user space before ELF load overwrites memory */
+            char args_buf[256];
+            if (arg2) {
+                const char *src = (const char *)arg2;
+                int i;
+                for (i = 0; i < 255 && src[i]; i++) args_buf[i] = src[i];
+                args_buf[i] = 0;
+            } else {
+                args_buf[0] = 0;
+            }
+
             int fd = swiftfs2_open((const char *)arg1, O_RDONLY);
             if (fd < 0) return -1;
 
@@ -84,13 +154,30 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t ar
             swiftfs2_close(fd);
             if (size == 0) { kfree(file_data); return -1; }
 
+            if (size >= 64) {
+                uint64_t vmagic = *(uint32_t *)file_data;
+                uint64_t ventry = *(uint64_t *)&file_data[0x18];
+                serial_printf("[exec] file=%s size=%u magic=%x entry=%x\n",
+                              (const char *)arg1, (unsigned)size,
+                              (unsigned)vmagic, (unsigned)ventry);
+            }
+
             uint64_t entry;
             if (elf64_load(file_data, &entry) < 0) {
+                serial_printf("[exec] elf64_load FAILED for %s size=%u\n",
+                              (const char *)arg1, (unsigned)size);
                 kfree(file_data);
                 return -1;
             }
             kfree(file_data);
 
+            /* Write args to user args page */
+            int i;
+            for (i = 0; args_buf[i]; i++) ARGS_PAGE[i] = args_buf[i];
+            ARGS_PAGE[i] = 0;
+
+            serial_printf("[exec] entry=%x rsp=%x\n",
+                          (unsigned)entry, (unsigned)0x7F003000);
             extern void user_entry(uint64_t entry, uint64_t rsp);
             extern uint64_t syscall_kernel_rsp;
             extern uint64_t stack_top[];
@@ -98,14 +185,29 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t ar
             uint64_t krsp = (uint64_t)stack_top;
             tss_set_kernel_stack(krsp);
             syscall_kernel_rsp = krsp;
-            user_entry(entry, 0x7F002000);
+            if (entry == 0) {
+                serial_puts("[exec] ERROR: entry is 0!\n");
+                for (;;) __asm__("hlt");
+            }
+            user_entry(entry, 0x7F003000);
             return 0;
         }
     case SC_FSTAT:
         return swiftfs2_fstat((int)arg1, (swiftfs2_stat_t *)arg2);
     case SC_EXIT:
-        serial_puts("[user] exit\n");
+        serial_puts("[user] exit, relaunching shell\n");
+        exec_user_binary("/bin/shell", 0x7F003000);
         for (;;) __asm__("hlt");
+    case SC_HALT:
+        serial_puts("[user] halt\n");
+        for (;;) __asm__("hlt");
+    case SC_MEMINFO:
+        {
+            uint64_t *buf = (uint64_t *)arg1;
+            buf[0] = pmm_total_mem();
+            buf[1] = pmm_free_count();
+        }
+        break;
     }
     return 0;
 }

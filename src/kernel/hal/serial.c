@@ -57,6 +57,19 @@ void serial_printf(const char *fmt, ...) {
             serial_puts(buf);
             break;
         }
+        case 'p':
+        case 'P': {
+            uint64_t n = __builtin_va_arg(args, uint64_t);
+            char buf[17];
+            for (int i = 15; i >= 0; i--) {
+                unsigned int d = n & 0xF;
+                buf[i] = d < 10 ? '0' + d : 'A' + d - 10;
+                n >>= 4;
+            }
+            buf[16] = 0;
+            serial_puts(buf);
+            break;
+        }
         case 'd':
         case 'i': {
             int n = __builtin_va_arg(args, int);

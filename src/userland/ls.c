@@ -2,9 +2,19 @@
 #include "syscall.h"
 
 void _start(void) {
+    const char *args = ARGS_PAGE;
+    const char *path = args[0] ? args : "/";
+
     uint8_t raw[4096];
-    int fd = open("/", O_RDONLY);
-    if (fd < 0) { print("ls: cannot open /\n"); exit(); }
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) { print("ls: cannot open "); print(path); print("\n"); exit(); }
+
+    stat_t st;
+    if (fstat(fd, &st) < 0 || !S_ISDIR(st.mode)) {
+        print("ls: "); print(path); print(": not a directory\n");
+        close(fd);
+        exit();
+    }
 
     int n = read(fd, raw, sizeof(raw));
     close(fd);

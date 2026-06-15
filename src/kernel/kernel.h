@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #define PAGE_SIZE 4096
+#define KHEAP_SIZE (1024 * 1024)
 
 void kmain(uint32_t mboot_info);
 

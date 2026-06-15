@@ -1,9 +1,8 @@
 #include "kernel.h"
 
-#define HEAP_SIZE (1024 * 1024)
 #define ALIGN 8
 
-static char heap_pool[HEAP_SIZE];
+static char heap_pool[KHEAP_SIZE];
 
 struct heap_block {
     size_t size;
@@ -15,12 +14,12 @@ static struct heap_block *heap_head;
 
 void kheap_init(void) {
     heap_head = (struct heap_block *)heap_pool;
-    heap_head->size = HEAP_SIZE - sizeof(struct heap_block);
+    heap_head->size = KHEAP_SIZE - sizeof(struct heap_block);
     heap_head->free = 1;
     heap_head->next = 0;
 
     serial_printf("[kheap] pool at %x, %d bytes\n",
-                  (unsigned)(uintptr_t)heap_pool, HEAP_SIZE);
+                  (unsigned)(uintptr_t)heap_pool, KHEAP_SIZE);
 }
 
 void *kmalloc(size_t size) {

@@ -15,11 +15,18 @@ static uint64_t page_alloc_zero(void) {
 int elf64_load(const void *data, uint64_t *entry_out) {
     const elf64_hdr_t *hdr = (const elf64_hdr_t *)data;
 
+    serial_printf("[elf64] ENTER data=%x magic=%x type=%d mach=%d phnum=%d\n",
+                  (unsigned)(uintptr_t)data,
+                  *(const uint32_t *)hdr->e_ident,
+                  hdr->e_type, hdr->e_machine, hdr->e_phnum);
+
     if (*(const uint32_t *)hdr->e_ident != ELF_MAGIC) return -1;
     if (hdr->e_ident[ELF64_EI_CLASS] != ELFCLASS64) return -1;
     if (hdr->e_type != ET_EXEC) return -1;
     if (hdr->e_machine != EM_X86_64) return -1;
 
+    serial_printf("[elf64] checks passed, e_phoff=%x e_entry=%x\n",
+                  (unsigned)hdr->e_phoff, (unsigned)hdr->e_entry);
     const elf64_phdr_t *phdr = (const elf64_phdr_t *)((uint8_t *)data + hdr->e_phoff);
 
     for (int i = 0; i < hdr->e_phnum; i++) {
@@ -51,16 +58,33 @@ int elf64_load(const void *data, uint64_t *entry_out) {
     }
 
     {
-        uint64_t stack_phys = page_alloc_zero();
-        if (!stack_phys) return -1;
-        vmm_map(0x7F000000, stack_phys,
-                PG_PRESENT | PG_WRITE | PG_USER | PG_NX);
-        stack_phys = page_alloc_zero();
-        if (!stack_phys) return -1;
-        vmm_map(0x7F001000, stack_phys,
-                PG_PRESENT | PG_WRITE | PG_USER | PG_NX);
+        /* 3 stack pages + 1 guard gap + 1 args page */
+        uint64_t phys;
+        phys = page_alloc_zero();
+        if (!phys) return -1;
+        vmm_map(0x7F000000, phys, PG_PRESENT | PG_WRITE | PG_USER | PG_NX);
+        phys = page_alloc_zero();
+        if (!phys) return -1;
+        vmm_map(0x7F001000, phys, PG_PRESENT | PG_WRITE | PG_USER | PG_NX);
+        phys = page_alloc_zero();
+        if (!phys) return -1;
+        vmm_map(0x7F002000, phys, PG_PRESENT | PG_WRITE | PG_USER | PG_NX);
+        /* 0x7F003000 unmapped — guard page */
+        phys = page_alloc_zero();
+        if (!phys) return -1;
+        vmm_map(0x7F004000, phys, PG_PRESENT | PG_WRITE | PG_USER | PG_NX);
     }
 
-    *entry_out = hdr->e_entry;
+    uint64_t raw_ee = *(uint64_t *)((uint8_t *)data + 0x18);
+    uint64_t struct_ee = hdr->e_entry;
+    serial_printf("[elf64] data=%x raw_ee=%x struct_ee=%x phnum=%d\n",
+                  (unsigned)(uintptr_t)data,
+                  (unsigned)raw_ee, (unsigned)struct_ee,
+                  hdr->e_phnum);
+    /* Check if corruption happened during mapping */
+    uint64_t check = *(uint64_t *)((uint8_t *)data + 0x18);
+    if (check != raw_ee)
+        serial_puts("[elf64] CORRUPTION after phdr loop!\n");
+    *entry_out = struct_ee;
     return 0;
 }
