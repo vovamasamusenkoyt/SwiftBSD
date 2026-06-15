@@ -43,45 +43,29 @@ static void write_if_missing(const char *path,
     if (fd >= 0) { swiftfs2_close(fd); return; }
 
     uint64_t sz = (uint64_t)end - (uint64_t)start;
-    serial_printf("[fs] writing %s (%llu bytes)\n", path, sz);
     fd = swiftfs2_open(path, O_WRONLY | O_CREAT | O_TRUNC);
-    if (fd < 0) { serial_printf("[fs] FAILED to open %s for write\n", path); return; }
-    serial_printf("[fs] opened %s fd=%d, writing %u bytes\n", path, fd, (unsigned)sz);
+    if (fd < 0) return;
     swiftfs2_write(fd, start, sz);
     swiftfs2_close(fd);
-    serial_printf("[fs] done writing %s\n", path);
-}
-
-static void task_a(void) {
-    for (;;) __asm__("pause");
-}
-
-static void task_b(void) {
-    for (;;) __asm__("pause");
 }
 
 void kmain(uint32_t mboot_info) {
     serial_init();
     idt_init();
 
-    serial_puts("\n========================================\n");
-    serial_puts("  SwiftBSD v0.3 - M3+M4\n");
-    serial_puts("========================================\n");
+    serial_puts("\n=== SwiftBSD v0.3 ===\n");
 
     pmm_init(mboot_info);
     uint64_t mem = pmm_total_mem();
-    serial_printf("[mem] %d MB (%d pages free)\n",
-                  (unsigned)(mem / (1024 * 1024)),
-                  (unsigned)pmm_free_count());
+    serial_printf("[mem] %d MB\n",
+                  (unsigned)(mem / (1024 * 1024)));
 
     kheap_init();
-    serial_puts("[kheap] heap initialized\n");
 
     pit_init(100);
     keyboard_init();
     sched_init();
 
-    serial_printf("[mm] page_pml4 at %x\n", (unsigned)(uintptr_t)&page_pml4);
     vmm_init();
     tss_init();
     serial_puts("[tss] task register loaded\n");
@@ -111,17 +95,9 @@ void kmain(uint32_t mboot_info) {
 
     /* Mount SwiftFS v2 and prepare userland */
     if (swiftfs2_mount(0) == 0) {
-        /* Check inode table via raw AHCI read to verify */
-        {
-            uint8_t iraw[4096];
-            ahci_read(0, 24, iraw, 8);
-            uint16_t im1 = *(uint16_t *)(iraw + 128);
-            uint16_t im2 = *(uint16_t *)(iraw + 256);
-            serial_printf("[dbg] raw ino1 mode=%x ino2 mode=%x\n", im1, im2);
-        }
         /* Create /usr/ and /usr/bin/ directories */
-        serial_printf("[kmain] mkdir /usr: %d\n", swiftfs2_mkdir("/usr", 0755));
-        serial_printf("[kmain] mkdir /usr/bin: %d\n", swiftfs2_mkdir("/usr/bin", 0755));
+        swiftfs2_mkdir("/usr", 0755);
+        swiftfs2_mkdir("/usr/bin", 0755);
 
         /* Write embedded ELF programs to /usr/bin/ */
         write_if_missing("/usr/bin/shell",
@@ -136,7 +112,6 @@ void kmain(uint32_t mboot_info) {
 
         /* Read shell and launch it via ELF loader */
         int fd = swiftfs2_open("/usr/bin/shell", O_RDONLY);
-        serial_printf("[kmain] open shell fd=%d\n", fd);
         if (fd >= 0) {
             uint32_t cap = 65536, size = 0;
             uint8_t *data = kmalloc(cap);
@@ -153,14 +128,12 @@ void kmain(uint32_t mboot_info) {
                 memcpy(data + size, tmp, n);
                 size += n;
             }
-            serial_printf("[kmain] shell read %u bytes\n", size);
             swiftfs2_close(fd);
 
             if (size > 0) {
-                serial_printf("[kmain] shell ELF size=%u\n", size);
                 uint64_t entry;
                 if (elf64_load(data, &entry) == 0) {
-                    serial_puts("[kmain] launching shell via ELF\n");
+                    serial_puts("[kmain] launching shell\n");
                     uint64_t kernel_rsp = (uint64_t)stack_top;
                     tss_set_kernel_stack(kernel_rsp);
                     syscall_kernel_rsp = kernel_rsp;
@@ -173,12 +146,8 @@ void kmain(uint32_t mboot_info) {
         }
     }
 
-    /* Fallback: old flat binary */
     extern void user_proc_init(void);
-    serial_puts("[kmain] ELF load failed, using flat binary\n");
     user_proc_init();
-
-    serial_puts("[kmain] entering idle loop\n");
     __asm__("sti");
     for (;;) __asm__("hlt");
 }

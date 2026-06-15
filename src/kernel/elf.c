@@ -15,12 +15,10 @@ static uint64_t page_alloc_zero(void) {
 int elf64_load(const void *data, uint64_t *entry_out) {
     const elf64_hdr_t *hdr = (const elf64_hdr_t *)data;
 
-    if (*(const uint32_t *)hdr->e_ident != ELF_MAGIC) { serial_puts("[elf] bad magic\n"); return -1; }
-    if (hdr->e_ident[ELF64_EI_CLASS] != ELFCLASS64) { serial_puts("[elf] not 64-bit\n"); return -1; }
-    if (hdr->e_type != ET_EXEC) { serial_puts("[elf] not EXEC\n"); return -2; }
-    if (hdr->e_machine != EM_X86_64) { serial_puts("[elf] not x86_64\n"); return -3; }
-
-    serial_printf("[elf] phoff=%u phnum=%u\n", (unsigned)hdr->e_phoff, hdr->e_phnum);
+    if (*(const uint32_t *)hdr->e_ident != ELF_MAGIC) return -1;
+    if (hdr->e_ident[ELF64_EI_CLASS] != ELFCLASS64) return -1;
+    if (hdr->e_type != ET_EXEC) return -1;
+    if (hdr->e_machine != EM_X86_64) return -1;
 
     const elf64_phdr_t *phdr = (const elf64_phdr_t *)((uint8_t *)data + hdr->e_phoff);
 
@@ -32,9 +30,6 @@ int elf64_load(const void *data, uint64_t *entry_out) {
         uint64_t memsz = phdr[i].p_memsz;
         uint64_t offset = phdr[i].p_offset;
         uint32_t pflags = phdr[i].p_flags;
-
-        serial_printf("[elf] LOAD vaddr=%x filesz=%u memsz=%u flags=%u\n",
-               (unsigned)vaddr, (unsigned)filesz, (unsigned)memsz, pflags);
 
         uint64_t end = vaddr + memsz;
         for (uint64_t page = vaddr & ~0xFFF; page < end; page += 0x1000) {

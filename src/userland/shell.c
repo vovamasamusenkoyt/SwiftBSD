@@ -16,6 +16,7 @@ static int readline(char *buf, int max) {
             continue;
         }
         buf[i++] = c;
+        { char ec[2] = {c, 0}; print(ec); }
     }
     buf[i] = 0;
     return i;

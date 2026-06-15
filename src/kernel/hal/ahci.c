@@ -133,7 +133,7 @@ static uint32_t ahci_port_read(ahci_port_t *p, int reg) {
 /*  Spin up a port                                                     */
 /* ------------------------------------------------------------------ */
 static int ahci_port_init(ahci_port_t *p, int idx) {
-    serial_printf("[ahci] port %d: trying...\n", idx);
+    (void)idx;
 
     /* Power on and spin up */
     uint32_t cmd = ahci_port_read(p, PORT_CMD);
@@ -158,13 +158,8 @@ static int ahci_port_init(ahci_port_t *p, int idx) {
 
     uint32_t ssts = ahci_port_read(p, PORT_SSTS);
     if ((ssts & SSTS_DET_MASK) != SSTS_DET_PRESENT) {
-        serial_printf("[ahci] port %d: no device (SSTS=%x)\n", idx, (unsigned)ssts);
         return 0;
     }
-
-    serial_printf("[ahci] port %d: device detected (SSTS=%x, SIG=%x)\n",
-                  idx, (unsigned)ssts,
-                  (unsigned)ahci_port_read(p, PORT_SIG));
 
     /* Allocate command list (1 KB aligned, we use 4 KB anyway) */
     p->clb_phys = page_alloc();
@@ -206,7 +201,6 @@ static int ahci_port_init(ahci_port_t *p, int idx) {
     cmd |= CMD_FRE | CMD_ST;
     ahci_port_write(p, PORT_CMD, cmd);
 
-    serial_printf("[ahci] port %d: ready\n", idx);
     p->initialized = 1;
     return 1;
 }
@@ -415,9 +409,8 @@ int ahci_init(void) {
         return 0;
     }
 
-    serial_printf("[ahci] found at %x:%x.%d vendor=%x device=%x\n",
-                  (unsigned)dev->bus, (unsigned)dev->slot, (unsigned)dev->func,
-                  (unsigned)dev->vendor, (unsigned)dev->device);
+    serial_printf("[ahci] at %x:%x.%d\n",
+                  (unsigned)dev->bus, (unsigned)dev->slot, (unsigned)dev->func);
 
     uint64_t abar_phys = dev->bar[5];
     if (abar_phys & 1) {
@@ -426,7 +419,6 @@ int ahci_init(void) {
     }
 
     abar_phys &= ~0xF;
-    serial_printf("[ahci] ABAR phys = %x\n", (unsigned)abar_phys);
 
     pci_enable_bus_master(dev);
     pci_enable_mmio(dev);
@@ -440,18 +432,19 @@ int ahci_init(void) {
     /* Read ports implemented */
     uint32_t pi = reg32(abar + AHCI_PI / 4);
     uint32_t cap = reg32(abar + AHCI_CAP / 4);
-    serial_printf("[ahci] CAP=%x PI=%x\n", (unsigned)cap, (unsigned)pi);
 
     nports = (cap & CAP_NP_MASK) + 1;
 
+    int active = 0;
     for (int i = 0; i < AHCI_MAX_PORTS && i < nports; i++) {
         if (!(pi & (1u << i))) continue;
         ports[i].regs = &abar[(0x100 + i * 0x80) / 4];
         ports[i].present = 1;
-
         if (ahci_port_init(&ports[i], i))
-            serial_printf("[ahci] port %d: active\n", i);
+            active++;
     }
+    if (active)
+        serial_printf("[ahci] %d port(s) active\n", active);
 
     ahci_ok = 1;
     return 1;

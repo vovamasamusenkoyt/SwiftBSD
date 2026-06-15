@@ -98,14 +98,7 @@ int pci_init(void) {
     ndevices = 0;
     scan_bus_recursive(0);
 
-    serial_printf("[pci] %d devices found\n", ndevices);
-    for (int i = 0; i < ndevices; i++) {
-        pci_dev_t *d = &devices[i];
-        serial_printf("[pci] %x:%x.%d %x:%x class=%x,%x,%x\n",
-                      (unsigned)d->bus, (unsigned)d->slot, (unsigned)d->func,
-                      (unsigned)d->vendor, (unsigned)d->device,
-                      (unsigned)d->class_code, (unsigned)d->subclass, (unsigned)d->prog_if);
-    }
+    serial_printf("[pci] %d devices\n", ndevices);
     return ndevices;
 }
 

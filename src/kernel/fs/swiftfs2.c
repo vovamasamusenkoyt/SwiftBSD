@@ -245,9 +245,6 @@ static uint32_t inode_alloc(uint16_t mode) {
             if (ino == 0) continue; /* inode 0 is invalid */
             swiftfs2_inode_t in;
             inode_read(ino, &in);
-            if (ino >= 2 && ino <= 16) {
-                serial_printf("[alloc] ino=%u mode=%x\n", ino, in.mode);
-            }
             if (in.mode == 0) {
                 memset(&in, 0, sizeof(in));
                 in.mode = mode;
@@ -336,19 +333,14 @@ static int path_walk(const char *path, uint32_t *inode_out) {
 
     while (1) {
         if (inode_read(ino, &in) < 0) {
-            serial_printf("[swiftfs2] path_walk: inode_read %u failed\n", ino);
             return -1;
         }
         if (!(in.mode & S_IFDIR)) {
-            serial_printf("[swiftfs2] path_walk: ino %u not a dir (mode=%x)\n", ino, in.mode);
             return -1;
         }
 
         /* Scan directory entries */
         int found = 0;
-        serial_printf("[pw] scanning ino %u for '", ino);
-        for (int di = 0; di < clen; di++) serial_putc(component[di]);
-        serial_puts("'\n");
         for (uint32_t bi = 0; ; bi++) {
             uint32_t pblock = bmap_read(&in, bi, 0);
             if (!pblock) break;
@@ -369,7 +361,6 @@ static int path_walk(const char *path, uint32_t *inode_out) {
             if (found) break;
         }
         if (!found) {
-            serial_printf("[swiftfs2] path_walk: component '%s' not found in ino %u\n", component, ino);
             return -1;
         }
 
@@ -431,7 +422,6 @@ int swiftfs2_open(const char *path, int flags) {
         if (slash) {
             *slash = 0;
             if (path_walk(parent_path, &parent_ino) < 0) {
-                serial_printf("[swiftfs2] path_walk parent '%s' failed\n", parent_path);
                 return -1;
             }
             memcpy(fname, slash + 1, SWIFTFS2_NAME_MAX);
@@ -441,10 +431,9 @@ int swiftfs2_open(const char *path, int flags) {
         }
 
         ino = inode_alloc(S_IFREG | 0644);
-        if (!ino) { serial_puts("[swiftfs2] inode_alloc failed\n"); return -1; }
+        if (!ino) return -1;
 
         if (dir_add_entry(parent_ino, fname, ino, SWIFTFS2_FILE_TYPE_REG) < 0) {
-            serial_puts("[swiftfs2] dir_add_entry failed\n");
             inode_free(ino);
             return -1;
         }
@@ -562,14 +551,11 @@ static int dir_add_entry(uint32_t dir_ino, const char *name,
     int nlen = strlen(name);
     uint16_t reclen = sizeof(swiftfs2_dirent_t) + nlen;
     reclen = (reclen + 3) & ~3; /* align to 4 */
-    serial_printf("[dir_add] ino=%u name='%s' child=%u reclen=%u\n",
-           dir_ino, name, child_ino, reclen);
 
     /* Scan directory for a free slot or end */
     for (uint32_t bi = 0; ; bi++) {
         uint32_t pblock = bmap_read(&dir_in, bi, 0);
         uint8_t *data;
-        int is_new = 0;
 
         if (!pblock) {
             pblock = block_alloc();
@@ -577,7 +563,6 @@ static int dir_add_entry(uint32_t dir_ino, const char *name,
             data = cache_get(pblock, 0);
             memset(data, 0, SWIFTFS2_BLOCK_SIZE);
             cache_mark_dirty(pblock, 0);
-            is_new = 1;
             /* Link block to inode */
             if (bi < SWIFTFS2_DIRECT_COUNT)
                 dir_in.direct[bi] = pblock;
@@ -828,15 +813,10 @@ int swiftfs2_mount(int ahci_port) {
 
     g_curr_group = 0;
     g_mounted = 1;
-    serial_printf("[swiftfs2] mounted: %u blocks, %u inodes, "
-                  "%d groups, %u free blocks\n",
+    serial_printf("[fs] mounted: %u blocks, %u inodes, "
+                  "%d groups, %u free\n",
                   (unsigned)sb.num_blocks, (unsigned)sb.inode_count,
                   g_nr_groups, (unsigned)sb.free_blocks);
-    serial_printf("[swiftfs2] gd[0]: inode_tbl=%u bitmap=%u free_inodes=%u free_blocks=%u\n",
-                  (unsigned)g_gd[0].inode_table_block,
-                  (unsigned)g_gd[0].block_bitmap_block,
-                  (unsigned)g_gd[0].free_inodes_count,
-                  (unsigned)g_gd[0].free_blocks_count);
     return 0;
 }
 
