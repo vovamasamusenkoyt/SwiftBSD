@@ -10,6 +10,8 @@ void serial_init(void);
 void serial_putc(char c);
 void serial_puts(const char *s);
 void serial_printf(const char *fmt, ...);
+int  serial_haschar(void);
+char serial_getc(void);
 
 struct kernel_api {
     void *(*kmalloc)(size_t size);

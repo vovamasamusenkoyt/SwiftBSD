@@ -13,7 +13,17 @@ ASMFLAGS := -ffreestanding -nostdlib -I src/kernel \
 LD := ld
 LDFLAGS := -T linker.ld -nostdlib -z max-page-size=0x1000 -Map=build/kernel.map
 
+USERLAND_CC := gcc
+USERLAND_CFLAGS := -ffreestanding -nostdlib -static -no-pie -mno-red-zone \
+                   -O2 -I src/userland -fno-stack-protector
+USERLAND_LDFLAGS := -T src/userland/user.ld -nostdlib -static -no-pie
+
+USERLAND_PROGS := shell ls cat echo
+USERLAND_ELFS := $(addprefix build/,$(addsuffix .elf,$(USERLAND_PROGS)))
+USERLAND_OBJS := $(addprefix build/,$(addsuffix _elf.o,$(USERLAND_PROGS)))
+
 RUSTC := rustc
+QEMU := qemu-system-x86_64
 QEMU := qemu-system-x86_64
 
 OBJS := \
@@ -41,7 +51,9 @@ OBJS := \
 	build/ahci.o \
 	build/module_loader.o \
 	build/string.o \
-	build/swiftfs2.o
+	build/swiftfs2.o \
+	build/elf.o \
+	$(USERLAND_OBJS)
 
 .PHONY: all iso run clean rust-module
 
@@ -85,6 +97,13 @@ build/%.o: src/kernel/%.c | build
 
 build/%.o: src/kernel/fs/%.c | build
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# Userland ELF programs
+build/%.elf: src/userland/%.c src/userland/user.ld $(USERLAND_DEPS) | build
+	$(USERLAND_CC) $(USERLAND_CFLAGS) -T src/userland/user.ld -o $@ $<
+
+build/%_elf.o: build/%.elf | build
+	ld -r -b binary -o $@ $<
 
 USER_PROG_BIN := build/user_prog.bin
 

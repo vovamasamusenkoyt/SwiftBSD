@@ -94,3 +94,12 @@ void serial_printf(const char *fmt, ...) {
     }
     __builtin_va_end(args);
 }
+
+int serial_haschar(void) {
+    return inb(COM1 + 5) & 1;
+}
+
+char serial_getc(void) {
+    while (!serial_haschar());
+    return inb(COM1);
+}

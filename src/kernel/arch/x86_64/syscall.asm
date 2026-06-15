@@ -8,6 +8,7 @@
 .global syscall_kernel_rsp
 syscall_kernel_rsp: .quad 0
 user_rsp_save: .quad 0
+retval_save: .quad 0
 
 .section .text
 .global syscall_entry
@@ -28,9 +29,12 @@ syscall_entry:
     mov rcx, r8
     call syscall_handler
 
+    mov [retval_save], rax
+
     pop rax
     pop r11
     pop rcx
     mov rsp, rax
 
+    mov rax, [retval_save]
     sysretq
