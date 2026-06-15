@@ -96,6 +96,11 @@ typedef struct {
     char     name[];
 } __attribute__((packed)) swiftfs2_dirent_t;
 
+typedef struct {
+    uint16_t mode;
+    uint64_t size;
+} swiftfs2_stat_t;
+
 /* --- Mount state --- */
 
 typedef struct {
@@ -116,5 +121,6 @@ int swiftfs2_mkdir(const char *path, uint16_t mode);
 int swiftfs2_unlink(const char *path);
 int swiftfs2_ls(const char *path,
                 void (*cb)(const char *name, uint16_t mode, uint64_t size));
+int swiftfs2_fstat(int fd, swiftfs2_stat_t *st);
 int swiftfs2_sync(void);
 int swiftfs2_umount(void);

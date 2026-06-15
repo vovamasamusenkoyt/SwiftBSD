@@ -13,6 +13,7 @@
 #define SC_CLOSE 6
 #define SC_EXEC  7
 #define SC_EXIT  8
+#define SC_FSTAT 9
 
 uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
     switch (num) {
@@ -100,6 +101,8 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t ar
             user_entry(entry, 0x7F002000);
             return 0;
         }
+    case SC_FSTAT:
+        return swiftfs2_fstat((int)arg1, (swiftfs2_stat_t *)arg2);
     case SC_EXIT:
         serial_puts("[user] exit\n");
         for (;;) __asm__("hlt");

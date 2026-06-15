@@ -62,6 +62,12 @@ static void cmd_ls(void) {
 static void cmd_cat(const char *path) {
     int fd = open(path, O_RDONLY);
     if (fd < 0) { print("cat: cannot open "); print(path); print("\n"); return; }
+    stat_t st;
+    if (fstat(fd, &st) == 0 && S_ISDIR(st.mode)) {
+        print("cat: "); print(path); print(" is a directory\n");
+        close(fd);
+        return;
+    }
     char buf[256];
     int n;
     while ((n = read(fd, buf, sizeof(buf))) > 0)
@@ -91,9 +97,13 @@ void _start(void) {
             break;
         else if (strcmp(args, "ls") == 0)
             cmd_ls();
-        else if (args[0] == 'c' && args[1] == 'a' && args[2] == 't' && args[3] == ' ')
+        else if (strcmp(args, "cat") == 0)
+            print("usage: cat <file>\n");
+        else if (strncmp(args, "cat ", 4) == 0)
             cmd_cat(args + 4);
-        else if (args[0] == 'e' && args[1] == 'c' && args[2] == 'h' && args[3] == 'o' && args[4] == ' ')
+        else if (strcmp(args, "echo") == 0)
+            print("\n");
+        else if (strncmp(args, "echo ", 5) == 0)
             cmd_echo(args + 5);
         else
             print("? unknown cmd (ls/cat/echo/exit)\n");

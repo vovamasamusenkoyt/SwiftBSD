@@ -14,7 +14,8 @@ static swiftfs2_gd_t *g_gd;        /* array of group descriptors */
 static uint8_t **g_bitmaps;        /* cached bitmap blocks (one per group) */
 static int g_curr_group;           /* hint for next-fit allocator */
 
-/* In-memory inode cache (for open files) */
+/* In-memory inode cache (for open files)
+   NOTE: fd_alloc() starts at 2 — fds 0/1 are reserved for stdin/stdout */
 static swiftfs2_fd_t g_fds[SWIFTFS2_MAX_FD];
 
 /* Block cache */
@@ -525,6 +526,15 @@ int swiftfs2_write(int fd, const void *buf, uint32_t size) {
 
     g_fds[fd].pos = pos;
     return done;
+}
+
+int swiftfs2_fstat(int fd, swiftfs2_stat_t *st) {
+    if (fd < 0 || fd >= SWIFTFS2_MAX_FD || !g_fds[fd].inode || !st) return -1;
+    swiftfs2_inode_t in;
+    inode_read(g_fds[fd].inode, &in);
+    st->mode = in.mode;
+    st->size = in.size;
+    return 0;
 }
 
 int swiftfs2_close(int fd) {
