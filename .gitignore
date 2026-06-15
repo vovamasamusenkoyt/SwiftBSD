@@ -1,7 +1,2 @@
+disk.img
 build/
-*.o
-*.a
-*.elf
-*.bin
-*.iso
-*.map
