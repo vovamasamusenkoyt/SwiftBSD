@@ -108,6 +108,10 @@ void vmm_unmap(uint64_t virt) {
     uint64_t *pt = (uint64_t *)(uintptr_t)(pd[pd_idx] & ~0xFFF);
     if (!(pd[pd_idx] & PG_PRESENT)) return;
 
+    uint64_t pte = pt[pt_idx];
+    if (pte & PG_USER)
+        page_free(pte & ~0xFFF);
+
     pt[pt_idx] = 0;
     __asm__ volatile("invlpg (%0)" : : "r"(virt));
 }
