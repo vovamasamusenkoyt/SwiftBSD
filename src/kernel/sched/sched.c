@@ -5,6 +5,7 @@
 #include "tss.h"
 #include "string.h"
 #include "idt.h"
+#include "vfs.h"
 
 extern uint64_t syscall_kernel_rsp;
 extern uint64_t syscall_frame_ptr;
@@ -106,6 +107,7 @@ int proc_create(uint64_t entry, uint64_t rsp, uint64_t cr3, uint64_t kstack) {
     for (int i = 0; i < VMA_MAX; i++)
         procs[idx].vmas[i].used = 0;
     procs[idx].vma_count  = 0;
+    vfs_init(procs[idx].fds);
 
     nr_procs++;
     return pid;
@@ -146,6 +148,7 @@ uint64_t *sched_irq_return(uint64_t *frame) {
 
     struct process *p = &procs[current_idx];
     set_kernel_stack(p->kstack);
+    vfs_set_fds(p->fds);
     if (p->cr3) {
         __asm__ volatile("mov %0, %%cr3" : : "r"(p->cr3) : "memory");
     }
@@ -154,6 +157,7 @@ uint64_t *sched_irq_return(uint64_t *frame) {
 
 void sched_run(void) {
     struct process *p = &procs[current_idx];
+    vfs_set_fds(p->fds);
     if (p->cr3) {
         __asm__ volatile("mov %0, %%cr3" : : "r"(p->cr3) : "memory");
     }
@@ -227,6 +231,7 @@ int proc_fork(void) {
     for (int i = 0; i < VMA_MAX; i++)
         procs[idx].vmas[i] = procs[parent_idx].vmas[i];
     procs[idx].vma_count  = procs[parent_idx].vma_count;
+    memcpy(procs[idx].fds, procs[parent_idx].fds, sizeof(struct file) * VFS_MAX_FILES);
 
     nr_procs++;
     return pid;

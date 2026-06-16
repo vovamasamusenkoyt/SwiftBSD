@@ -51,7 +51,6 @@ static void write_if_missing(const char *path,
     vfs_close(fd);
 }
 
-void vfs_init(void);
 void swiftfs2_vfs_init(void);
 
 void kmain(uint32_t mboot_info) {
@@ -104,7 +103,8 @@ void kmain(uint32_t mboot_info) {
     memset(buf, 0xAA, 512);
     ahci_write(0, 1024, buf, 1);
 
-    vfs_init();
+    struct file boot_fds[VFS_MAX_FILES];
+    vfs_init(boot_fds);
 
     log_raw("\n");
     /* Mount SwiftFS v2 and prepare userland */

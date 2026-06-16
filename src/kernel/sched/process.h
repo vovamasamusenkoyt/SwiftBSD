@@ -38,6 +38,8 @@ struct process {
     uint64_t    heap_break;
     struct vma  vmas[VMA_MAX];
     int         vma_count;
+
+    struct file fds[VFS_MAX_FILES];
 };
 
 extern struct process procs[MAX_PROCS];

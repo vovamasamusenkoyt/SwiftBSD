@@ -20,6 +20,9 @@
 #define SC_MMAP   16
 #define SC_MUNMAP 17
 #define SC_MSYNC  18
+#define SC_PIPE   19
+#define SC_DUP    20
+#define SC_DUP2   21
 
 #define O_RDONLY    0
 #define O_WRONLY    1
@@ -81,6 +84,10 @@ static int munmap(void *addr, unsigned long length) {
 static int msync(void *addr, unsigned long length) {
     return (int)syscall(SC_MSYNC, (long)addr, length, 0);
 }
+static int pipe(int fds[2]) { return (int)syscall(SC_PIPE, (long)fds, 0, 0); }
+static int dup(int oldfd) { return (int)syscall(SC_DUP, oldfd, 0, 0); }
+static int dup2(int oldfd, int newfd) { return (int)syscall(SC_DUP2, oldfd, newfd, 0); }
+
 static void *sbrk(long increment) {
     long cur = syscall(SC_BRK, 0, 0, 0);
     if (increment == 0) return (void *)cur;

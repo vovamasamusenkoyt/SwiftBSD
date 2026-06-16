@@ -1,7 +1,9 @@
 #include "vfs.h"
 #include "kernel.h"
+#include "string.h"
+#include "sched.h"
 
-static struct file files[VFS_MAX_FILES];
+static struct file *g_fds;
 static struct vfs_ops *fs_list[8];
 static int nr_fs;
 
@@ -45,24 +47,116 @@ static struct vfs_ops serial_ops = {
     .fstat = ser_fstat,
 };
 
+/* ── pipe internals ── */
+
+#define PIPE_BUF_SIZE 4096
+
+struct pipe {
+    uint8_t  buf[PIPE_BUF_SIZE];
+    uint32_t rpos, wpos;
+    int readers, writers;
+};
+
+static int pipe_read_op(void *priv, void *buf, uint32_t sz, uint64_t *pos) {
+    (void)pos;
+    struct pipe *p = (struct pipe *)priv;
+    uint32_t total = 0;
+    while (sz > 0) {
+        uint32_t avail = p->wpos - p->rpos;
+        if (avail == 0) {
+            if (p->writers == 0) return (int)total;
+            sched_yield();
+            continue;
+        }
+        uint32_t n = sz < avail ? sz : avail;
+        uint32_t off = p->rpos % PIPE_BUF_SIZE;
+        if (off + n <= PIPE_BUF_SIZE) {
+            memcpy(buf, p->buf + off, n);
+        } else {
+            uint32_t first = PIPE_BUF_SIZE - off;
+            memcpy(buf, p->buf + off, first);
+            memcpy((uint8_t *)buf + first, p->buf, n - first);
+        }
+        p->rpos += n;
+        buf = (uint8_t *)buf + n;
+        sz -= n;
+        total += n;
+    }
+    return (int)total;
+}
+
+static int pipe_write_op(void *priv, const void *buf, uint32_t sz, uint64_t *pos) {
+    (void)pos;
+    struct pipe *p = (struct pipe *)priv;
+    uint32_t total = 0;
+    while (sz > 0) {
+        uint32_t space = PIPE_BUF_SIZE - (p->wpos - p->rpos);
+        if (space == 0) {
+            if (p->readers == 0) return total > 0 ? (int)total : -1;
+            sched_yield();
+            continue;
+        }
+        uint32_t n = sz < space ? sz : space;
+        uint32_t off = p->wpos % PIPE_BUF_SIZE;
+        if (off + n <= PIPE_BUF_SIZE) {
+            memcpy(p->buf + off, buf, n);
+        } else {
+            uint32_t first = PIPE_BUF_SIZE - off;
+            memcpy(p->buf + off, buf, first);
+            memcpy(p->buf, (uint8_t *)buf + first, n - first);
+        }
+        p->wpos += n;
+        buf = (const uint8_t *)buf + n;
+        sz -= n;
+        total += n;
+    }
+    return (int)total;
+}
+
+static int pipe_close_op(void *priv) {
+    struct pipe *p = (struct pipe *)priv;
+    p->readers--;
+    if (p->readers == 0 && p->writers == 0)
+        kfree(p);
+    return 0;
+}
+
+static int pipe_write_close_op(void *priv) {
+    struct pipe *p = (struct pipe *)priv;
+    p->writers--;
+    if (p->readers == 0 && p->writers == 0)
+        kfree(p);
+    return 0;
+}
+
+static struct vfs_ops pipe_read_ops = {
+    .name  = "pipe_r",
+    .read  = pipe_read_op,
+    .close = pipe_close_op,
+};
+
+static struct vfs_ops pipe_write_ops = {
+    .name  = "pipe_w",
+    .write = pipe_write_op,
+    .close = pipe_write_close_op,
+};
+
 /* ── VFS init ── */
 
-void vfs_init(void) {
+void vfs_init(struct file *fds) {
+    g_fds = fds;
     for (int i = 0; i < VFS_MAX_FILES; i++)
-        files[i].used = 0;
+        fds[i].refcount = 0;
 
-    /* Pre-open fd 0 (stdin) and fd 1 (stdout) */
-    files[0].ops   = &serial_ops;
-    files[0].priv  = 0;
-    files[0].pos   = 0;
-    files[0].flags = 0;
-    files[0].used  = 1;
+    fds[0].ops      = &serial_ops;
+    fds[0].refcount = 1;
 
-    files[1].ops   = &serial_ops;
-    files[1].priv  = 0;
-    files[1].pos   = 0;
-    files[1].flags = 0;
-    files[1].used  = 1;
+    fds[1].ops      = &serial_ops;
+    fds[1].refcount = 1;
+}
+
+void vfs_set_fds(struct file *fds) {
+    g_fds = fds;
 }
 
 /* ── register a filesystem ── */
@@ -78,7 +172,7 @@ int vfs_register(struct vfs_ops *ops) {
 
 static int fd_alloc(void) {
     for (int i = 2; i < VFS_MAX_FILES; i++)
-        if (!files[i].used) return i;
+        if (g_fds[i].refcount == 0) return i;
     return -1;
 }
 
@@ -94,11 +188,11 @@ int vfs_open(const char *path, int flags) {
                 fs_list[i]->close(priv);
                 return -1;
             }
-            files[fd].ops   = fs_list[i];
-            files[fd].priv  = priv;
-            files[fd].pos   = 0;
-            files[fd].flags = flags;
-            files[fd].used  = 1;
+            g_fds[fd].ops      = fs_list[i];
+            g_fds[fd].priv     = priv;
+            g_fds[fd].pos      = 0;
+            g_fds[fd].flags    = flags;
+            g_fds[fd].refcount = 1;
             return fd;
         }
     }
@@ -108,57 +202,122 @@ int vfs_open(const char *path, int flags) {
 /* ── vfs_read / vfs_write ── */
 
 int vfs_read(int fd, void *buf, uint32_t sz) {
-    if (fd < 0 || fd >= VFS_MAX_FILES || !files[fd].used)
+    if (fd < 0 || fd >= VFS_MAX_FILES || g_fds[fd].refcount == 0)
         return -1;
-    return files[fd].ops->read(files[fd].priv, buf, sz, &files[fd].pos);
+    return g_fds[fd].ops->read(g_fds[fd].priv, buf, sz, &g_fds[fd].pos);
 }
 
 int vfs_write(int fd, const void *buf, uint32_t sz) {
-    if (fd < 0 || fd >= VFS_MAX_FILES || !files[fd].used)
+    if (fd < 0 || fd >= VFS_MAX_FILES || g_fds[fd].refcount == 0)
         return -1;
-    return files[fd].ops->write(files[fd].priv, buf, sz, &files[fd].pos);
+    return g_fds[fd].ops->write(g_fds[fd].priv, buf, sz, &g_fds[fd].pos);
 }
 
 /* ── vfs_close ── */
 
 int vfs_close(int fd) {
-    if (fd < 0 || fd >= VFS_MAX_FILES || !files[fd].used)
+    if (fd < 0 || fd >= VFS_MAX_FILES || g_fds[fd].refcount == 0)
         return -1;
-    int ret = files[fd].ops->close(files[fd].priv);
-    files[fd].used = 0;
-    files[fd].ops  = 0;
-    files[fd].priv = 0;
+    g_fds[fd].refcount--;
+    if (g_fds[fd].refcount > 0) return 0;
+
+    int ret = 0;
+    if (g_fds[fd].ops->close)
+        ret = g_fds[fd].ops->close(g_fds[fd].priv);
+    g_fds[fd].ops      = 0;
+    g_fds[fd].priv     = 0;
+    g_fds[fd].pos      = 0;
+    g_fds[fd].flags    = 0;
+    g_fds[fd].refcount = 0;
     return ret;
 }
 
 /* ── vfs_fstat ── */
 
 int vfs_fstat(int fd, struct stat *st) {
-    if (fd < 0 || fd >= VFS_MAX_FILES || !files[fd].used)
+    if (fd < 0 || fd >= VFS_MAX_FILES || g_fds[fd].refcount == 0)
         return -1;
-    return files[fd].ops->fstat(files[fd].priv, st);
+    return g_fds[fd].ops->fstat(g_fds[fd].priv, st);
 }
 
 /* ── vfs_lseek ── */
 
 int vfs_lseek(int fd, int64_t offset, int whence) {
-    if (fd < 0 || fd >= VFS_MAX_FILES || !files[fd].used)
+    if (fd < 0 || fd >= VFS_MAX_FILES || g_fds[fd].refcount == 0)
         return -1;
     uint64_t new_pos;
     switch (whence) {
     case SEEK_SET: new_pos = (uint64_t)offset; break;
-    case SEEK_CUR: new_pos = files[fd].pos + (uint64_t)offset; break;
+    case SEEK_CUR: new_pos = g_fds[fd].pos + (uint64_t)offset; break;
     default:       return -1;
     }
-    files[fd].pos = new_pos;
+    g_fds[fd].pos = new_pos;
     return (int)new_pos;
 }
 
 /* ── vfs_get_file (for mmap) ── */
 
 int vfs_get_file(int fd, struct file **f) {
-    if (fd < 0 || fd >= VFS_MAX_FILES || !files[fd].used)
+    if (fd < 0 || fd >= VFS_MAX_FILES || g_fds[fd].refcount == 0)
         return -1;
-    *f = &files[fd];
+    *f = &g_fds[fd];
     return 0;
+}
+
+/* ── vfs_pipe ── */
+
+int vfs_pipe(int fds[2]) {
+    struct pipe *p = kmalloc(sizeof(struct pipe));
+    if (!p) return -1;
+    p->rpos = p->wpos = 0;
+    p->readers = 1;
+    p->writers = 1;
+
+    int rfd = fd_alloc();
+    if (rfd < 0) { kfree(p); return -1; }
+    int wfd = fd_alloc();
+    if (wfd < 0) { g_fds[rfd].refcount = 0; kfree(p); return -1; }
+
+    g_fds[rfd].ops      = &pipe_read_ops;
+    g_fds[rfd].priv     = p;
+    g_fds[rfd].pos      = 0;
+    g_fds[rfd].flags    = 0;
+    g_fds[rfd].refcount = 1;
+
+    g_fds[wfd].ops      = &pipe_write_ops;
+    g_fds[wfd].priv     = p;
+    g_fds[wfd].pos      = 0;
+    g_fds[wfd].flags    = 0;
+    g_fds[wfd].refcount = 1;
+
+    fds[0] = rfd;
+    fds[1] = wfd;
+    return 0;
+}
+
+/* ── vfs_dup / vfs_dup2 ── */
+
+int vfs_dup(int oldfd) {
+    if (oldfd < 0 || oldfd >= VFS_MAX_FILES || g_fds[oldfd].refcount == 0)
+        return -1;
+    int newfd = fd_alloc();
+    if (newfd < 0) return -1;
+    g_fds[newfd] = g_fds[oldfd];
+    g_fds[newfd].refcount = 1;
+    g_fds[oldfd].refcount++;
+    return newfd;
+}
+
+int vfs_dup2(int oldfd, int newfd) {
+    if (oldfd < 0 || oldfd >= VFS_MAX_FILES || g_fds[oldfd].refcount == 0)
+        return -1;
+    if (newfd < 0 || newfd >= VFS_MAX_FILES)
+        return -1;
+    if (newfd == oldfd) return newfd;
+    if (g_fds[newfd].refcount > 0)
+        vfs_close(newfd);
+    g_fds[newfd] = g_fds[oldfd];
+    g_fds[newfd].refcount = 1;
+    g_fds[oldfd].refcount++;
+    return newfd;
 }

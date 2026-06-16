@@ -26,6 +26,9 @@
 #define SC_MMAP  16
 #define SC_MUNMAP 17
 #define SC_MSYNC 18
+#define SC_PIPE  19
+#define SC_DUP   20
+#define SC_DUP2  21
 
 #define MAP_FAILED ((void *)-1)
 #define ARGS_PAGE ((char *)0x7F004000)
@@ -316,6 +319,21 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t ar
             }
             return 0;
         }
+    case SC_PIPE:
+        {
+            int fds[2];
+            int ret = vfs_pipe(fds);
+            if (ret == 0 && arg1) {
+                int *uptr = (int *)arg1;
+                uptr[0] = fds[0];
+                uptr[1] = fds[1];
+            }
+            return (uint64_t)ret;
+        }
+    case SC_DUP:
+        return (uint64_t)vfs_dup((int)arg1);
+    case SC_DUP2:
+        return (uint64_t)vfs_dup2((int)arg1, (int)arg2);
     }
     return 0;
 }
