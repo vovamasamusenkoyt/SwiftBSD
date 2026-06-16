@@ -111,27 +111,31 @@ void exception_handler(struct exception_frame *frame) {
             return;
         }
 
-        /* Demand paging: file-backed VMA (not present, read or write) */
+        /* Demand paging: file-backed or anonymous VMA (not present) */
         if (!pf_present && cr2 >= 0x1000000) {
             uint64_t page = cr2 & ~0xFFF;
             struct process *p = &procs[current_idx];
             for (int i = 0; i < VMA_MAX; i++) {
                 struct vma *v = &p->vmas[i];
                 if (!v->used || cr2 < v->start || cr2 >= v->end) continue;
-                if (v->fd < 0) break;
 
                 uint64_t phys = vmm_alloc_page();
                 if (!phys) {
                     serial_printf("[pf] OOM at %x\n", cr2);
                     for (;;) __asm__("hlt");
                 }
-                uint64_t pg_flags = PG_PRESENT | PG_USER | PG_NX;
+                uint64_t pg_flags = PG_PRESENT | PG_USER;
                 if (pf_write && (v->prot & 2)) pg_flags |= PG_WRITE;
+                if (!(v->prot & 4)) pg_flags |= PG_NX;
                 vmm_map(page, phys, pg_flags);
 
-                uint64_t foff = v->foff + (page - v->start);
-                vfs_lseek(v->fd, (int64_t)foff, SEEK_SET);
-                vfs_read(v->fd, (void *)(uintptr_t)page, 4096);
+                if (v->fd >= 0) {
+                    uint64_t foff = v->foff + (page - v->start);
+                    vfs_lseek(v->fd, (int64_t)foff, SEEK_SET);
+                    vfs_read(v->fd, (void *)(uintptr_t)page, 4096);
+                } else {
+                    /* Anonymous: page already zeroed by vmm_alloc_page */
+                }
                 return;
             }
         }

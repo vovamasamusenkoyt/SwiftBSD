@@ -11,7 +11,7 @@
 #define PROC_ZOMBIE  2
 #define PROC_WAITING 3
 
-#define VMA_MAX 32
+#define VMA_MAX 64
 
 struct vma {
     uint64_t    start;

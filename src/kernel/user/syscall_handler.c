@@ -29,12 +29,105 @@
 #define SC_PIPE  19
 #define SC_DUP   20
 #define SC_DUP2  21
+#define SC_MPROTECT 22
 
 #define MAP_FAILED ((void *)-1)
 #define ARGS_PAGE ((char *)0x7F004000)
 
 extern uint64_t page_alloc(void);
 extern void vmm_map(uint64_t virt, uint64_t phys, uint64_t flags);
+
+/* ── VMA helpers ── */
+
+static int vma_alloc_slot(void) {
+    struct vma *v = procs[current_idx].vmas;
+    for (int i = 0; i < VMA_MAX; i++)
+        if (!v[i].used) return i;
+    return -1;
+}
+
+static int vma_find(uint64_t addr) {
+    struct vma *v = procs[current_idx].vmas;
+    for (int i = 0; i < VMA_MAX; i++)
+        if (v[i].used && addr >= v[i].start && addr < v[i].end)
+            return i;
+    return -1;
+}
+
+static uint64_t vma_hint(void) {
+    uint64_t hint = 0x40000000;
+    struct vma *v = procs[current_idx].vmas;
+    for (int i = 0; i < VMA_MAX; i++)
+        if (v[i].used && v[i].end > hint)
+            hint = v[i].end;
+    return (hint + 0xFFF) & ~0xFFF;
+}
+
+static int vma_split(int idx, uint64_t split_addr) {
+    struct vma *v = procs[current_idx].vmas;
+    if (split_addr <= v[idx].start || split_addr >= v[idx].end)
+        return -1;
+    int right = vma_alloc_slot();
+    if (right < 0) return -1;
+    v[right] = v[idx];
+    v[right].start = split_addr;
+    v[right].foff += split_addr - v[idx].start;
+    v[idx].end = split_addr;
+    procs[current_idx].vma_count++;
+    return right;
+}
+
+static int vma_compat(struct vma *a, struct vma *b) {
+    if (a->prot != b->prot) return 0;
+    if (a->flags != b->flags) return 0;
+    if (a->fd != b->fd) return 0;
+    if (a->fd >= 0) {
+        uint64_t expected = a->foff + (a->end - a->start);
+        if (b->foff != expected) return 0;
+    }
+    return 1;
+}
+
+static void vma_try_merge(int idx) {
+    struct vma *v = procs[current_idx].vmas;
+    for (int dir = -1; dir <= 1; dir += 2) {
+        int other = idx + dir;
+        if (other < 0 || other >= VMA_MAX || !v[other].used)
+            continue;
+        struct vma *a, *b;
+        if (dir == -1) { a = &v[other]; b = &v[idx]; }
+        else           { a = &v[idx];   b = &v[other]; }
+        if (a->end == b->start && vma_compat(a, b)) {
+            a->end = b->end;
+            b->used = 0;
+            procs[current_idx].vma_count--;
+            return;
+        }
+    }
+}
+
+static void vma_writeback_dirty(uint64_t start, uint64_t end, struct vma *v) {
+    if (v->fd < 0 || !(v->flags & 0x01))
+        return;
+    for (uint64_t p = start; p < end; p += 0x1000) {
+        uint64_t *pt = vmm_pt_lookup(p);
+        if (pt && (*pt & PG_DIRTY)) {
+            uint64_t foff = v->foff + (p - v->start);
+            vfs_lseek(v->fd, (int64_t)foff, SEEK_SET);
+            char tmp[4096];
+            memcpy(tmp, (void *)(uintptr_t)p, 4096);
+            vfs_write(v->fd, tmp, 4096);
+            *pt &= ~PG_DIRTY;
+        }
+    }
+}
+
+static void vma_unmap_pages(uint64_t start, uint64_t end) {
+    for (uint64_t p = start; p < end; p += 0x1000)
+        vmm_unmap(p);
+}
+
+/* ── syscall handler ── */
 
 uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t arg3) {
     switch (num) {
@@ -106,7 +199,6 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t ar
             }
             kfree(file_data);
 
-            /* Write args to user args page */
             int i;
             for (i = 0; args_buf[i]; i++) ARGS_PAGE[i] = args_buf[i];
             ARGS_PAGE[i] = 0;
@@ -188,9 +280,7 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t ar
             uint64_t addr   = arg1;
             uint64_t length = arg2;
             int prot        = (int)arg3;
-            (void)prot;
 
-            /* arg4 = flags packed in high bits of arg3 */
             struct { int flags; int fd; int pad; int64_t offset; } *mmap_args;
             mmap_args = (void *)&arg3;
             int flags      = mmap_args->flags;
@@ -200,60 +290,19 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t ar
             if (length == 0) return (uint64_t)MAP_FAILED;
             length = (length + 0xFFF) & ~0xFFF;
 
-            int vma_idx = -1;
-            for (int i = 0; i < VMA_MAX; i++) {
-                if (!procs[current_idx].vmas[i].used) { vma_idx = i; break; }
-            }
+            int vma_idx = vma_alloc_slot();
             if (vma_idx < 0) return (uint64_t)MAP_FAILED;
 
-            if (flags & 0x01) { /* MAP_SHARED == 0x01 from user */
-                if (addr == 0) {
-                    uint64_t hint = 0x40000000;
-                    for (int i = 0; i < VMA_MAX; i++) {
-                        if (procs[current_idx].vmas[i].used &&
-                            procs[current_idx].vmas[i].end > hint)
-                            hint = procs[current_idx].vmas[i].end;
-                    }
-                    addr = (hint + 0xFFF) & ~0xFFF;
-                }
-                procs[current_idx].vmas[vma_idx].start  = addr;
-                procs[current_idx].vmas[vma_idx].end    = addr + length;
-                procs[current_idx].vmas[vma_idx].prot   = prot;
-                procs[current_idx].vmas[vma_idx].flags  = flags;
-                procs[current_idx].vmas[vma_idx].fd     = fd;
-                procs[current_idx].vmas[vma_idx].foff   = (uint64_t)offset;
-                procs[current_idx].vmas[vma_idx].used   = 1;
-                procs[current_idx].vma_count++;
-                return addr;
-            }
+            if (addr == 0) addr = vma_hint();
 
-            if (addr == 0) {
-                uint64_t hint = 0x40000000;
-                for (int i = 0; i < VMA_MAX; i++) {
-                    if (procs[current_idx].vmas[i].used &&
-                        procs[current_idx].vmas[i].end > hint)
-                        hint = procs[current_idx].vmas[i].end;
-                }
-                addr = (hint + 0xFFF) & ~0xFFF;
-            }
-
-            for (uint64_t v = addr; v < addr + length; v += 0x1000) {
-                uint64_t phys = page_alloc();
-                if (!phys) return (uint64_t)MAP_FAILED;
-                memset((void *)(uintptr_t)phys, 0, 4096);
-                uint64_t vm_flags = PG_PRESENT | PG_USER;
-                if (prot & 2) vm_flags |= PG_WRITE;
-                if (!(prot & 4)) vm_flags |= PG_NX;
-                vmm_map(v, phys, vm_flags);
-            }
-
-            procs[current_idx].vmas[vma_idx].start = addr;
-            procs[current_idx].vmas[vma_idx].end   = addr + length;
-            procs[current_idx].vmas[vma_idx].prot  = prot;
-            procs[current_idx].vmas[vma_idx].flags = flags;
-            procs[current_idx].vmas[vma_idx].fd    = -1;
-            procs[current_idx].vmas[vma_idx].foff  = 0;
-            procs[current_idx].vmas[vma_idx].used  = 1;
+            struct vma *v = &procs[current_idx].vmas[vma_idx];
+            v->start = addr;
+            v->end   = addr + length;
+            v->prot  = prot;
+            v->flags = flags;
+            v->fd    = fd;
+            v->foff  = (uint64_t)(fd >= 0 ? offset : 0);
+            v->used  = 1;
             procs[current_idx].vma_count++;
             return addr;
         }
@@ -262,32 +311,30 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t ar
             uint64_t addr   = arg1;
             uint64_t length = arg2;
             if (length == 0) return 0;
-            length = (length + 0xFFF) & ~0xFFF;
+            uint64_t end = addr + ((length + 0xFFF) & ~0xFFF);
 
             for (int i = 0; i < VMA_MAX; i++) {
                 struct vma *v = &procs[current_idx].vmas[i];
-                if (!v->used) continue;
-                if (addr >= v->start && addr < v->end) {
-                    if (v->fd >= 0 && (v->flags & 0x01)) {
-                        /* MAP_SHARED: write dirty pages back */
-                        for (uint64_t p = addr; p < addr + length && p < v->end; p += 0x1000) {
-                            uint64_t *pt = vmm_pt_lookup(p);
-                            if (pt && (*pt & PG_DIRTY)) {
-                                uint64_t foff = v->foff + (p - v->start);
-                                vfs_lseek(v->fd, (int64_t)foff, SEEK_SET);
-                                char tmp[4096];
-                                memcpy(tmp, (void *)(uintptr_t)p, 4096);
-                                vfs_write(v->fd, tmp, 4096);
-                                *pt &= ~PG_DIRTY;
-                            }
-                        }
-                    }
-                    for (uint64_t p = addr; p < addr + length && p < v->end; p += 0x1000)
-                        vmm_unmap(p);
-                    v->used = 0;
-                    procs[current_idx].vma_count--;
-                    break;
+                if (!v->used || addr >= v->end || end <= v->start)
+                    continue;
+
+                if (addr > v->start) {
+                    int r = vma_split(i, addr);
+                    if (r < 0) return -1;
+                    v = &procs[current_idx].vmas[r];
+                    i = r;
                 }
+
+                if (end < v->end) {
+                    vma_split(i, end);
+                }
+
+                v = &procs[current_idx].vmas[i];
+                vma_writeback_dirty(v->start, v->end, v);
+                vma_unmap_pages(v->start, v->end);
+                v->used = 0;
+                procs[current_idx].vma_count--;
+                vma_try_merge(i);
             }
             return 0;
         }
@@ -296,26 +343,15 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t ar
             uint64_t addr   = arg1;
             uint64_t length = arg2;
             if (length == 0) return 0;
+            uint64_t end = addr + ((length + 0xFFF) & ~0xFFF);
 
             for (int i = 0; i < VMA_MAX; i++) {
                 struct vma *v = &procs[current_idx].vmas[i];
-                if (!v->used) continue;
-                if (addr >= v->start && addr < v->end) {
-                    if (v->fd >= 0 && (v->flags & 0x01)) {
-                        for (uint64_t p = addr; p < addr + length && p < v->end; p += 0x1000) {
-                            uint64_t *pt = vmm_pt_lookup(p);
-                            if (pt && (*pt & PG_DIRTY)) {
-                                uint64_t foff = v->foff + (p - v->start);
-                                vfs_lseek(v->fd, (int64_t)foff, SEEK_SET);
-                                char tmp[4096];
-                                memcpy(tmp, (void *)(uintptr_t)p, 4096);
-                                vfs_write(v->fd, tmp, 4096);
-                                *pt &= ~PG_DIRTY;
-                            }
-                        }
-                    }
-                    break;
-                }
+                if (!v->used || addr >= v->end || end <= v->start)
+                    continue;
+                uint64_t start = addr > v->start ? addr : v->start;
+                uint64_t stop  = end < v->end ? end : v->end;
+                vma_writeback_dirty(start, stop, v);
             }
             return 0;
         }
@@ -334,6 +370,48 @@ uint64_t syscall_handler(uint64_t num, uint64_t arg1, uint64_t arg2, uint64_t ar
         return (uint64_t)vfs_dup((int)arg1);
     case SC_DUP2:
         return (uint64_t)vfs_dup2((int)arg1, (int)arg2);
+    case SC_MPROTECT:
+        {
+            uint64_t addr   = arg1;
+            uint64_t length = arg2;
+            int prot        = (int)arg3;
+            if (length == 0) return 0;
+            uint64_t end = addr + ((length + 0xFFF) & ~0xFFF);
+
+            for (int i = 0; i < VMA_MAX; i++) {
+                struct vma *v = &procs[current_idx].vmas[i];
+                if (!v->used || addr >= v->end || end <= v->start)
+                    continue;
+
+                if (addr > v->start) {
+                    int r = vma_split(i, addr);
+                    if (r < 0) return -1;
+                    v = &procs[current_idx].vmas[r];
+                    i = r;
+                }
+
+                if (end < v->end) {
+                    vma_split(i, end);
+                }
+
+                v = &procs[current_idx].vmas[i];
+                v->prot = prot;
+
+                for (uint64_t p = v->start; p < v->end; p += 0x1000) {
+                    uint64_t *pt = vmm_pt_lookup(p);
+                    if (pt && (*pt & PG_PRESENT)) {
+                        uint64_t paddr = *pt & 0x0000FFFFFFFFF000ULL;
+                        uint64_t keep = *pt & (PG_ACCESSED | PG_DIRTY);
+                        uint64_t new_flags = PG_PRESENT | PG_USER | keep;
+                        if (prot & 2) new_flags |= PG_WRITE;
+                        if (!(prot & 4)) new_flags |= PG_NX;
+                        *pt = paddr | new_flags;
+                    }
+                }
+                vma_try_merge(i);
+            }
+            return 0;
+        }
     }
     return 0;
 }

@@ -23,6 +23,7 @@
 #define SC_PIPE   19
 #define SC_DUP    20
 #define SC_DUP2   21
+#define SC_MPROTECT 22
 
 #define O_RDONLY    0
 #define O_WRONLY    1
@@ -87,6 +88,9 @@ static int msync(void *addr, unsigned long length) {
 static int pipe(int fds[2]) { return (int)syscall(SC_PIPE, (long)fds, 0, 0); }
 static int dup(int oldfd) { return (int)syscall(SC_DUP, oldfd, 0, 0); }
 static int dup2(int oldfd, int newfd) { return (int)syscall(SC_DUP2, oldfd, newfd, 0); }
+static int mprotect(void *addr, unsigned long length, int prot) {
+    return (int)syscall(SC_MPROTECT, (long)addr, length, prot);
+}
 
 static void *sbrk(long increment) {
     long cur = syscall(SC_BRK, 0, 0, 0);
